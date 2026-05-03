@@ -101,8 +101,10 @@ onMounted(async () => {
       axios.get(`/api/school/${props.schoolSlug}`),
       axios.get(`/api/school/${props.schoolSlug}/students`),
     ])
-    school.value   = schoolRes.data
-    students.value = studentsRes.data
+    if (schoolRes.data && typeof schoolRes.data === 'object' && schoolRes.data.name) {
+      school.value = schoolRes.data
+    }
+    students.value = Array.isArray(studentsRes.data) ? studentsRes.data : []
   } catch (_) {} finally {
     loading.value = false
   }

@@ -246,6 +246,10 @@ onMounted(async () => {
     const { data: result } = await axios.get(
       `/api/verify/${encodeURIComponent(props.schoolSlug)}/${encodeURIComponent(props.studentId)}`
     )
+    // Guard against unexpected HTML responses (e.g. misconfigured proxy)
+    if (!result || typeof result !== 'object' || !result.student) {
+      throw new Error('Invalid response from verification server')
+    }
     data.value = result
   } catch (e) {
     error.value = true
