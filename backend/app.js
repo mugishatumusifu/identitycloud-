@@ -8,7 +8,7 @@ const { getDB } = require('./db');
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
-const IDENTITY_CLOUD_PUBLIC_URL = (process.env.IDENTITY_CLOUD_PUBLIC_URL || 'http://localhost:5174').replace(/\/$/, '');
+const IDENTITY_CLOUD_PUBLIC_URL = (process.env.IDENTITY_CLOUD_PUBLIC_URL || 'https://identitycloud.vercel.app').replace(/\/$/, '');
 // Backend's own public URL (used to build photo URLs served by this backend)
 const IDENTITY_CLOUD_BACKEND_URL = (process.env.IDENTITY_CLOUD_BACKEND_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 
