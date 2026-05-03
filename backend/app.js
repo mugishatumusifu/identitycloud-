@@ -5,7 +5,7 @@ const cors    = require('cors');
 const path    = require('path');
 const fs      = require('fs');
 const { getDB } = require('./db');
-const { isGitHubConfigured, savePhotoToGitHub } = require('./githubStorage');
+const { isGitHubConfigured, logGitHubConfig, savePhotoToGitHub } = require('./githubStorage');
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -127,8 +127,10 @@ app.post('/api/publish', async (req, res) => {
                 console.log('[publish] Photo saved to GitHub:', photoFilename);
               }
             } catch (ghErr) {
-              console.warn('[publish] GitHub photo upload failed, falling back to local disk:', ghErr.message);
+              console.error('[publish] GitHub photo upload FAILED for', photoFilename, ':', ghErr.message);
             }
+          } else {
+            console.warn('[publish] GitHub not configured — photo will use local disk only.');
           }
 
           // ── Fallback: save to local disk (ephemeral on Render free tier) ──
@@ -334,6 +336,7 @@ app.get('/api/health', (_, res) => {
 
 // ── Start ──────────────────────────────────────────────────────────────────────
 getDB().then(() => {
+  logGitHubConfig();
   app.listen(PORT, () => {
     console.log(`\n🌐  Identity Cloud Backend running on http://localhost:${PORT}`);
     console.log(`    POST /api/publish           – receive cards from Card Studio`);

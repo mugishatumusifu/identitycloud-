@@ -17,11 +17,6 @@
 
 const https = require('https');
 
-const GITHUB_TOKEN  = process.env.GITHUB_TOKEN  || '';
-const GITHUB_OWNER  = process.env.GITHUB_OWNER  || '';
-const GITHUB_REPO   = process.env.GITHUB_REPO   || '';
-const GITHUB_BRANCH = process.env.GITHUB_BRANCH || 'main';
-
 // Path inside the repo where photos live (no leading slash)
 const REPO_PHOTOS_PATH = 'backend/uploads/photos';
 
@@ -29,10 +24,61 @@ const REPO_PHOTOS_PATH = 'backend/uploads/photos';
 const REPO_DB_PATH = 'backend/data/identity-cloud.db';
 
 /**
+ * Reads GitHub config from env vars at call time (not cached at module load).
+ * Handles GITHUB_REPO values that are accidentally set as full URLs, e.g.:
+ *   "github.com/owner/repo"  → "repo"
+ *   "https://github.com/owner/repo" → "repo"
+ *   "owner/repo"             → "repo"
+ *   "repo"                   → "repo"   (correct — unchanged)
+ */
+function getConfig() {
+  const token  = process.env.GITHUB_TOKEN  || '';
+  const owner  = process.env.GITHUB_OWNER  || '';
+  const branch = process.env.GITHUB_BRANCH || 'main';
+
+  let repo = process.env.GITHUB_REPO || '';
+
+  // Strip protocol prefix if present
+  repo = repo.replace(/^https?:\/\//i, '');
+
+  // If it contains "github.com/" strip everything up to and including the second slash
+  // e.g. "github.com/mugishatumusifu/identitycloud-" → "identitycloud-"
+  if (repo.toLowerCase().includes('github.com/')) {
+    const parts = repo.split('/');
+    repo = parts[parts.length - 1] || parts[parts.length - 2] || repo;
+  } else if (repo.includes('/')) {
+    // "owner/repo" format — keep only the repo part
+    repo = repo.split('/').pop();
+  }
+
+  // Strip trailing slash or whitespace
+  repo = repo.trim().replace(/\/$/, '');
+
+  return { token, owner, repo, branch };
+}
+
+/**
  * Returns true when all required GitHub env vars are configured.
  */
 function isGitHubConfigured() {
-  return !!(GITHUB_TOKEN && GITHUB_OWNER && GITHUB_REPO);
+  const { token, owner, repo } = getConfig();
+  return !!(token && owner && repo);
+}
+
+/**
+ * Logs the resolved GitHub config on startup so it's visible in Render logs.
+ * Call this once after the server starts.
+ */
+function logGitHubConfig() {
+  const { token, owner, repo, branch } = getConfig();
+  if (token && owner && repo) {
+    console.log(`[githubStorage] GitHub configured: owner=${owner} repo=${repo} branch=${branch} token=${token.slice(0, 12)}...`);
+  } else {
+    console.warn('[githubStorage] GitHub NOT fully configured — photos will use ephemeral local disk only.');
+    console.warn(`[githubStorage]   GITHUB_TOKEN  = ${token  ? '(set)' : '(MISSING)'}`);
+    console.warn(`[githubStorage]   GITHUB_OWNER  = ${owner  || '(MISSING)'}`);
+    console.warn(`[githubStorage]   GITHUB_REPO   = ${repo   || '(MISSING)'} (raw: "${process.env.GITHUB_REPO || ''}")`);
+  }
 }
 
 /**
@@ -43,14 +89,15 @@ function isGitHubConfigured() {
  */
 function ghRequest(method, apiPath, body = null) {
   return new Promise((resolve, reject) => {
+    const { token, owner, repo } = getConfig();
     const payload = body ? JSON.stringify(body) : null;
 
     const options = {
       hostname: 'api.github.com',
-      path:     `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${apiPath}`,
+      path:     `/repos/${owner}/${repo}/contents/${apiPath}`,
       method,
       headers: {
-        'Authorization': `token ${GITHUB_TOKEN}`,
+        'Authorization': `token ${token}`,
         'User-Agent':    'IdentityCloud-Backend/1.0',
         'Accept':        'application/vnd.github.v3+json',
         'Content-Type':  'application/json',
@@ -82,13 +129,18 @@ function ghRequest(method, apiPath, body = null) {
  * Returns null if the file does not exist yet.
  */
 async function getFileSha(repoFilePath) {
+  const { branch } = getConfig();
   try {
-    const data = await ghRequest('GET', `${repoFilePath}?ref=${GITHUB_BRANCH}`);
+    const data = await ghRequest('GET', `${repoFilePath}?ref=${branch}`);
     return data?.sha || null;
   } catch (err) {
-    // 404 means file doesn't exist – that's fine
-    if (err.message && err.message.includes('404')) return null;
-    throw err;
+    // 404 = file doesn't exist yet (normal for first upload) → return null so PUT creates it.
+    // Any other error (401, 403, 422…) → also return null and let the PUT attempt proceed;
+    // if the PUT also fails it will throw and the caller will log the real error.
+    if (!err.message.includes('404')) {
+      console.warn('[githubStorage] getFileSha warning:', err.message);
+    }
+    return null;
   }
 }
 
@@ -100,24 +152,35 @@ async function getFileSha(repoFilePath) {
  * @returns {string|null}     – raw.githubusercontent.com URL, or null on failure
  */
 async function savePhotoToGitHub(filename, base64Data) {
-  if (!isGitHubConfigured()) return null;
+  if (!isGitHubConfigured()) {
+    console.warn('[githubStorage] savePhotoToGitHub called but GitHub is not configured.');
+    return null;
+  }
 
+  const { owner, repo, branch } = getConfig();
   const repoFilePath = `${REPO_PHOTOS_PATH}/${filename}`;
 
-  // Get existing SHA (required by GitHub API to update an existing file)
+  console.log(`[githubStorage] Uploading photo: ${filename} → ${owner}/${repo}/${repoFilePath}`);
+
+  // Get existing SHA (required by GitHub API to update an existing file).
+  // Returns null if file is new — that's fine for a fresh upload.
   const existingSha = await getFileSha(repoFilePath);
 
   const body = {
     message: `chore: upload student photo ${filename}`,
     content: base64Data,   // GitHub API expects raw base64 (no data URI prefix)
-    branch:  GITHUB_BRANCH,
+    branch,
   };
-  if (existingSha) body.sha = existingSha;
+  if (existingSha) {
+    body.sha = existingSha;
+    console.log(`[githubStorage] Updating existing file (sha=${existingSha.slice(0, 8)}...)`);
+  }
 
   await ghRequest('PUT', repoFilePath, body);
 
-  // Return the raw content URL so it can be used anywhere without auth
-  return `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/${repoFilePath}`;
+  const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${repoFilePath}`;
+  console.log(`[githubStorage] Photo committed successfully: ${url}`);
+  return url;
 }
 
 /**
@@ -129,9 +192,10 @@ async function savePhotoToGitHub(filename, base64Data) {
  */
 async function pullDbFromGitHub(localPath) {
   if (!isGitHubConfigured()) return false;
+  const { branch } = getConfig();
   let data;
   try {
-    data = await ghRequest('GET', `${REPO_DB_PATH}?ref=${GITHUB_BRANCH}`);
+    data = await ghRequest('GET', `${REPO_DB_PATH}?ref=${branch}`);
   } catch (err) {
     if (err.message && err.message.includes('404')) return false; // not in repo yet
     throw err;
@@ -159,6 +223,7 @@ function saveDbToGitHub(localPath) {
   if (_dbSaveTimer) clearTimeout(_dbSaveTimer);
   _dbSaveTimer = setTimeout(async () => {
     _dbSaveTimer = null;
+    const { branch } = getConfig();
     try {
       const content = require('fs').readFileSync(localPath);
       const base64  = content.toString('base64');
@@ -166,7 +231,7 @@ function saveDbToGitHub(localPath) {
       const body = {
         message: 'chore: persist identity-cloud.db [auto]',
         content: base64,
-        branch:  GITHUB_BRANCH,
+        branch,
       };
       if (existingSha) body.sha = existingSha;
       await ghRequest('PUT', REPO_DB_PATH, body);
@@ -177,4 +242,4 @@ function saveDbToGitHub(localPath) {
   }, DB_DEBOUNCE_MS);
 }
 
-module.exports = { isGitHubConfigured, savePhotoToGitHub, pullDbFromGitHub, saveDbToGitHub };
+module.exports = { isGitHubConfigured, logGitHubConfig, savePhotoToGitHub, pullDbFromGitHub, saveDbToGitHub };
