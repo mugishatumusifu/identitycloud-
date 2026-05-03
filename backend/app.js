@@ -5,6 +5,7 @@ const cors    = require('cors');
 const path    = require('path');
 const fs      = require('fs');
 const { getDB } = require('./db');
+const { isGitHubConfigured, savePhotoToGitHub } = require('./githubStorage');
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -108,17 +109,35 @@ app.post('/api/publish', async (req, res) => {
       const expiresAt = raw.expiresAt || null;
       const status    = calcStatus(expiresAt, raw.status || 'active');
 
-      // ── Handle photo: save base64 photoData to disk if provided ──────────
+      // ── Handle photo: save to GitHub repo (primary) and local disk (fallback) ──
       let resolvedPhotoUrl = raw.photoUrl || null;
       if (raw.photoData && typeof raw.photoData === 'string') {
         try {
-          // Strip data URI prefix if present
-          const base64Data = raw.photoData.replace(/^data:image\/\w+;base64,/, '');
-          const ext = raw.photoData.match(/^data:image\/(\w+);base64,/) ? raw.photoData.match(/^data:image\/(\w+);base64,/)[1] : 'jpg';
+          const base64Data   = raw.photoData.replace(/^data:image\/\w+;base64,/, '');
+          const extMatch     = raw.photoData.match(/^data:image\/(\w+);base64,/);
+          const ext          = extMatch ? extMatch[1] : 'jpg';
           const photoFilename = `${schoolSlug}_${studentId.replace(/[^a-zA-Z0-9_-]/g, '_')}.${ext}`;
-          const photoPath = path.join(PHOTOS_DIR, photoFilename);
-          fs.writeFileSync(photoPath, Buffer.from(base64Data, 'base64'));
-          resolvedPhotoUrl = `${IDENTITY_CLOUD_BACKEND_URL}/uploads/photos/${photoFilename}`;
+
+          // ── Primary: commit photo to GitHub so it survives Render restarts ──
+          if (isGitHubConfigured()) {
+            try {
+              const githubUrl = await savePhotoToGitHub(photoFilename, base64Data);
+              if (githubUrl) {
+                resolvedPhotoUrl = githubUrl;
+                console.log('[publish] Photo saved to GitHub:', photoFilename);
+              }
+            } catch (ghErr) {
+              console.warn('[publish] GitHub photo upload failed, falling back to local disk:', ghErr.message);
+            }
+          }
+
+          // ── Fallback: save to local disk (ephemeral on Render free tier) ──
+          if (!resolvedPhotoUrl || !isGitHubConfigured()) {
+            const photoPath = path.join(PHOTOS_DIR, photoFilename);
+            fs.writeFileSync(photoPath, Buffer.from(base64Data, 'base64'));
+            resolvedPhotoUrl = `${IDENTITY_CLOUD_BACKEND_URL}/uploads/photos/${photoFilename}`;
+            console.log('[publish] Photo saved to local disk (ephemeral):', photoFilename);
+          }
         } catch (photoErr) {
           console.warn('[publish] Failed to save photo for', studentId, photoErr.message);
         }

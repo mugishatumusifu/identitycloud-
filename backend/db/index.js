@@ -14,6 +14,7 @@ const Loki = require('lokijs');
 const path = require('fs') && require('path');
 const fs   = require('fs');
 const { v4: uuidv4 } = require('uuid');
+const { isGitHubConfigured, pullDbFromGitHub, saveDbToGitHub } = require('../githubStorage');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const DB_FILE  = process.env.DB_FILE  || path.join(DATA_DIR, 'identity-cloud.db');
@@ -58,7 +59,17 @@ function getOrCreate(db, name, options = {}) {
   return db.getCollection(name) || db.addCollection(name, options);
 }
 
-function initDB() {
+async function initDB() {
+  // ── Pull latest DB from GitHub before LokiJS loads the file ─────────────────
+  if (isGitHubConfigured()) {
+    try {
+      const pulled = await pullDbFromGitHub(DB_FILE);
+      if (pulled) console.log('[db] Loaded latest DB from GitHub');
+    } catch (err) {
+      console.warn('[db] Could not pull DB from GitHub on startup:', err.message);
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const db = new Loki(DB_FILE, {
       autoload: true,
@@ -68,6 +79,15 @@ function initDB() {
           const students = getOrCreate(db, 'students', { indices: ['schoolSlug', 'studentId'] });
           const logs     = getOrCreate(db, 'logs');
           const admins   = getOrCreate(db, 'admins',   { unique: ['username'] });
+
+          // ── Intercept saveDatabase to sync to GitHub after every local save ──
+          const _origSave = db.saveDatabase.bind(db);
+          db.saveDatabase = function (cb) {
+            _origSave(function (err) {
+              if (!err) saveDbToGitHub(DB_FILE);
+              if (cb) cb(err);
+            });
+          };
 
           // Wrapper to give a clean, promise-based API
           const wrap = (col) => ({
