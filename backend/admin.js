@@ -13,6 +13,7 @@ const fs      = require('fs');
 const path    = require('path');
 const bcrypt  = require('bcryptjs');
 const { getDB, DATA_DIR } = require('./db');
+const { deletePhoto: deleteCloudinaryPhoto } = require('./utils/cloudinary');
 
 const router = express.Router();
 
@@ -88,6 +89,14 @@ function deletePhotoFor(schoolSlug, studentId) {
       }
     }
   } catch (_) {}
+}
+
+// Delete the Cloudinary asset for a student (best-effort).
+async function deleteCloudinaryFor(student) {
+  if (!student) return;
+  if (student.photoPublicId) {
+    try { await deleteCloudinaryPhoto(student.photoPublicId); } catch (_) {}
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -235,7 +244,10 @@ router.delete('/schools/:slug', requireAdmin, async (req, res) => {
     if (!school) return res.status(404).json({ error: 'School not found' });
 
     const students = await db.students.find({ schoolSlug: slug });
-    for (const s of students) deletePhotoFor(slug, s.studentId);
+    for (const s of students) {
+      deletePhotoFor(slug, s.studentId);   // legacy disk cleanup (no-op if missing)
+      await deleteCloudinaryFor(s);        // Cloudinary cleanup
+    }
 
     const { deletedCount } = await db.students.deleteMany({ schoolSlug: slug });
     await db.schools.findOneAndDelete({ slug });
@@ -298,6 +310,7 @@ router.delete('/schools/:slug/students/:studentId', requireAdmin, async (req, re
     const removed = await db.students.findOneAndDelete({ schoolSlug: slug, studentId: safeStudentId });
     if (!removed) return res.status(404).json({ error: 'Student not found' });
     deletePhotoFor(slug, safeStudentId);
+    await deleteCloudinaryFor(removed);
     await db.save();
     await writeLog('DELETE', 'STUDENT', `Deleted student ${safeStudentId} @ ${slug}`, { slug, studentId: safeStudentId });
     res.json({ success: true });
