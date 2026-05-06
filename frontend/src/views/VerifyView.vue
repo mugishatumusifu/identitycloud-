@@ -338,6 +338,9 @@ onMounted(async () => {
   border-radius: 24px;
   object-fit: cover;
 }
+.student-photo{
+  height: 105px;
+}
 .photo-placeholder {
   display: flex; align-items: center; justify-content: center;
   background: linear-gradient(135deg, var(--accent), var(--accent-green));
