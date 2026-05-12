@@ -205,11 +205,32 @@ router.get('/schools', requireAdmin, async (_req, res) => {
 router.get('/schools/:slug', requireAdmin, async (req, res) => {
   try {
     const db = await getDB();
-    const slug = req.params.slug;
+    const slug   = req.params.slug;
+    const page   = Math.max(1, parseInt(req.query.page,  10) || 1);
+    const limit  = Math.min(100, Math.max(10, parseInt(req.query.limit, 10) || 50));
+    const search = (req.query.search || '').trim();
+    const status = (req.query.status || '').trim();
+
     const school = await db.schools.findOne({ slug });
     if (!school) return res.status(404).json({ error: 'School not found' });
-    const students = await db.students.find({ schoolSlug: slug });
-    res.json({ school, students });
+
+    const filter = { schoolSlug: slug };
+    if (status) filter.status = status;
+    if (search) filter.$or = [
+      { fullName:  { $regex: search, $options: 'i' } },
+      { studentId: { $regex: search, $options: 'i' } },
+      { class:     { $regex: search, $options: 'i' } },
+    ];
+
+    const { docs: students, total } = await db.students.findPaginated(
+      filter, { skip: (page - 1) * limit, limit, sort: { fullName: 1 } }
+    );
+
+    res.json({
+      school,
+      students,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

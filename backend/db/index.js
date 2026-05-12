@@ -61,6 +61,16 @@ function wrap(Model) {
       return docs.map(clean);
     },
 
+    async findPaginated(filter = {}, { skip = 0, limit = 50, sort } = {}) {
+      let q = Model.find(buildQuery(filter)).skip(skip).limit(limit);
+      if (sort) q = q.sort(sort);
+      const [docs, total] = await Promise.all([
+        q.lean(),
+        Model.countDocuments(buildQuery(filter)),
+      ]);
+      return { docs: docs.map(clean), total };
+    },
+
     async findOne(filter = {}) {
       const doc = await Model.findOne(buildQuery(filter)).lean();
       return clean(doc);

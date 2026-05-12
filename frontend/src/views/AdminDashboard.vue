@@ -151,7 +151,7 @@
           <div class="sh-right">
             <div class="sh-meta-row">
               <code class="mono-chip">{{ activeSchool.school.slug }}</code>
-              <span class="badge badge-active">{{ activeSchool.students.length }} students</span>
+              <span class="badge badge-active">{{ studentTotal }} students</span>
             </div>
             <h2 class="sh-name">{{ activeSchool.school.name }}</h2>
             <div class="sh-actions">
@@ -225,6 +225,30 @@
               </button>
             </div>
           </div>
+        </div>
+
+        <!-- Pagination bar -->
+        <div v-if="studentTotalPages > 1" class="pagination-bar">
+          <button class="pg-btn" :disabled="studentPage <= 1" @click="changePage(studentPage - 1)">
+            <Icon name="arrow-left" :size="14" />
+          </button>
+          <div class="pg-pages">
+            <button
+              v-for="p in paginationRange"
+              :key="p"
+              class="pg-num"
+              :class="{ active: p === studentPage, ellipsis: p === '…' }"
+              :disabled="p === '…'"
+              @click="p !== '…' && changePage(p)"
+            >{{ p }}</button>
+          </div>
+          <button class="pg-btn" :disabled="studentPage >= studentTotalPages" @click="changePage(studentPage + 1)">
+            <Icon name="arrow-right" :size="14" />
+          </button>
+          <span class="pg-info">
+            {{ (studentPage - 1) * studentPageSize + 1 }}–{{ Math.min(studentPage * studentPageSize, studentTotal) }}
+            of {{ studentTotal }}
+          </span>
         </div>
       </section>
 
@@ -339,7 +363,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
 import Icon from '@/components/Icon.vue'
@@ -373,6 +397,11 @@ const activeSchool  = ref(null)        // { school, students }
 const schoolSearch  = ref('')
 const studentSearch = ref('')
 const studentFilter = ref('')
+const studentPage       = ref(1)
+const studentPageSize   = ref(50)
+const studentTotal      = ref(0)
+const studentTotalPages = ref(0)
+let   _searchTimer      = null
 
 const editSchool   = ref(null)
 const editStudent  = ref(null)
@@ -423,17 +452,16 @@ const filteredSchools = computed(() => {
 })
 const filteredStudents = computed(() => {
   if (!activeSchool.value) return []
-  let arr = activeSchool.value.students
-  if (studentFilter.value) arr = arr.filter(s => s.status === studentFilter.value)
-  const q = studentSearch.value.trim().toLowerCase()
-  if (q) {
-    arr = arr.filter(s =>
-      (s.fullName  || '').toLowerCase().includes(q) ||
-      (s.studentId || '').toLowerCase().includes(q) ||
-      (s.class     || '').toLowerCase().includes(q)
-    )
-  }
-  return arr
+  return activeSchool.value.students
+})
+
+const paginationRange = computed(() => {
+  const total = studentTotalPages.value
+  const cur   = studentPage.value
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1)
+  if (cur <= 4)         return [1, 2, 3, 4, 5, '…', total]
+  if (cur >= total - 3) return [1, '…', total - 4, total - 3, total - 2, total - 1, total]
+  return [1, '…', cur - 1, cur, cur + 1, '…', total]
 })
 
 // ── Fetchers ───────────────────────────────────────────────────────────────
@@ -449,15 +477,21 @@ async function loadLogs() {
   const { data } = await api.get('/api/admin/logs?limit=200')
   logs.value = data
 }
-async function loadActiveSchool(slug) {
-  const { data } = await api.get(`/api/admin/schools/${encodeURIComponent(slug)}`)
-  activeSchool.value = data
+async function loadActiveSchool(slug, page = 1) {
+  const params = new URLSearchParams({ page, limit: studentPageSize.value })
+  if (studentSearch.value.trim()) params.set('search', studentSearch.value.trim())
+  if (studentFilter.value)        params.set('status', studentFilter.value)
+  const { data } = await api.get(`/api/admin/schools/${encodeURIComponent(slug)}?${params}`)
+  activeSchool.value      = data
+  studentPage.value       = data.pagination.page
+  studentTotal.value      = data.pagination.total
+  studentTotalPages.value = data.pagination.pages
 }
 
 async function refresh() {
   loading.value = true
   try {
-    if (activeSchool.value) await loadActiveSchool(activeSchool.value.school.slug)
+    if (activeSchool.value) await loadActiveSchool(activeSchool.value.school.slug, studentPage.value)
     else if (tab.value === 'overview') await loadOverview()
     else if (tab.value === 'schools')  await loadSchools()
     else if (tab.value === 'logs')     await loadLogs()
@@ -469,8 +503,43 @@ function goTab(k) {
   activeSchool.value = null
   refresh()
 }
-async function enterSchool(slug) { loading.value = true; try { await loadActiveSchool(slug) } finally { loading.value = false } }
-function exitSchool() { activeSchool.value = null; refresh() }
+async function enterSchool(slug) {
+  loading.value = true
+  studentPage.value  = 1
+  studentTotal.value = 0
+  studentSearch.value = ''
+  studentFilter.value = ''
+  try { await loadActiveSchool(slug) } finally { loading.value = false }
+}
+function exitSchool() {
+  activeSchool.value  = null
+  studentPage.value   = 1
+  studentTotal.value  = 0
+  studentSearch.value = ''
+  studentFilter.value = ''
+  refresh()
+}
+
+// ── Pagination ─────────────────────────────────────────────────────────────
+async function changePage(p) {
+  if (p < 1 || p > studentTotalPages.value || p === studentPage.value) return
+  loading.value = true
+  try { await loadActiveSchool(activeSchool.value.school.slug, p) }
+  finally { loading.value = false }
+}
+
+// Watchers: reset to page 1 and reload when search/filter changes
+watch(studentSearch, () => {
+  if (!activeSchool.value) return
+  clearTimeout(_searchTimer)
+  _searchTimer = setTimeout(() => {
+    loadActiveSchool(activeSchool.value.school.slug, 1)
+  }, 350)
+})
+watch(studentFilter, () => {
+  if (!activeSchool.value) return
+  loadActiveSchool(activeSchool.value.school.slug, 1)
+})
 
 function logout() {
   localStorage.removeItem('ic_admin_token')
@@ -490,7 +559,7 @@ async function saveEditSchool() {
       themeColor: editSchool.value.themeColor,
     })
     editSchool.value = null
-    await Promise.all([loadSchools(), activeSchool.value ? loadActiveSchool(activeSchool.value.school.slug) : null])
+    await Promise.all([loadSchools(), activeSchool.value ? loadActiveSchool(activeSchool.value.school.slug, studentPage.value) : null])
   } catch (e) { alert(e?.response?.data?.error || 'Failed to save') }
   finally { saving.value = false }
 }
@@ -531,14 +600,14 @@ async function saveEditStudent() {
       payload
     )
     editStudent.value = null
-    await loadActiveSchool(activeSchool.value.school.slug)
+    await loadActiveSchool(activeSchool.value.school.slug, studentPage.value)
   } catch (e) { alert(e?.response?.data?.error || 'Failed to save') }
   finally { saving.value = false }
 }
 async function toggleRevoke(st) {
   const action = st.status === 'revoked' ? 'restore' : 'revoke'
   await api.post(`/api/admin/schools/${encodeURIComponent(activeSchool.value.school.slug)}/students/${encodeURIComponent(st.studentId)}/${action}`)
-  await loadActiveSchool(activeSchool.value.school.slug)
+  await loadActiveSchool(activeSchool.value.school.slug, studentPage.value)
 }
 function confirmDeleteStudent(st) {
   confirmAction.value = {
@@ -547,7 +616,7 @@ function confirmDeleteStudent(st) {
     label: 'Delete student',
     run: async () => {
       await api.delete(`/api/admin/schools/${encodeURIComponent(activeSchool.value.school.slug)}/students/${encodeURIComponent(st.studentId)}`)
-      await loadActiveSchool(activeSchool.value.school.slug)
+      await loadActiveSchool(activeSchool.value.school.slug, studentPage.value)
     },
   }
 }
@@ -1022,6 +1091,56 @@ onMounted(async () => {
 
 .modal-enter-active, .modal-leave-active { transition: opacity 0.2s; }
 .modal-enter-from, .modal-leave-to { opacity: 0; }
+
+/* ── Pagination ──────────────────────────────────────────────────────────── */
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: center;
+  padding: 12px 0 4px;
+  flex-wrap: wrap;
+}
+.pg-btn {
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  border: 1.5px solid rgba(0,180,216,0.2);
+  background: rgba(255,255,255,0.8);
+  color: var(--accent-2);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+.pg-btn:hover:not(:disabled) { background: rgba(0,180,216,0.1); border-color: var(--accent); }
+.pg-btn:disabled { opacity: 0.38; cursor: default; }
+.pg-pages { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; justify-content: center; }
+.pg-num {
+  min-width: 36px; height: 36px;
+  padding: 0 8px;
+  border-radius: 10px;
+  border: 1.5px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-weight: 600; font-size: 0.88rem;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.pg-num:hover:not(:disabled):not(.active) { background: rgba(0,180,216,0.08); color: var(--accent-2); }
+.pg-num.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.pg-num.ellipsis { cursor: default; color: var(--text-muted); font-size: 1rem; letter-spacing: 0.05em; }
+.pg-info {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  white-space: nowrap;
+  padding-left: 6px;
+}
 
 /* ── Mobile ─────────────────────────────────────────────────────────────── */
 @media (max-width: 900px) {
