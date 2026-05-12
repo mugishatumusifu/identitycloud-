@@ -67,12 +67,6 @@
         Back to Identity Cloud
       </a>
     </div>
-
-    <p class="hint">
-      <Icon name="info" :size="12" />
-      First time? Run
-      <code>node create-admin.js</code> in the backend folder.
-    </p>
   </div>
 </template>
 
