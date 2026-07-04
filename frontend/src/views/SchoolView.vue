@@ -5,9 +5,9 @@
     </div>
 
     <div v-else-if="!school" class="error-box glass-card fade-up">
-      <div class="err-icon"><Icon name="school" :size="32" /></div>
-      <h2>School Not Found</h2>
-      <p>No school with slug <code>{{ schoolSlug }}</code> has been published.</p>
+      <div class="err-icon"><Icon name="building" :size="32" /></div>
+      <h2>Project Not Found</h2>
+      <p>No project with slug <code>{{ schoolSlug }}</code> has been published.</p>
       <a href="/" class="back-btn"><Icon name="arrow-left" :size="14" /> Home</a>
     </div>
 
@@ -18,7 +18,7 @@
           <img :src="school.logo" :alt="school.name" />
         </div>
         <div class="school-logo-placeholder" v-else :style="{ background: `linear-gradient(135deg, ${school.themeColor || '#00b4d8'}, ${school.themeColor || '#0077b6'})` }">
-          <Icon name="school" :size="26" />
+          <Icon :name="orgIcon" :size="26" />
         </div>
         <div class="school-info">
           <h1 class="school-name">{{ school.name }}</h1>
@@ -26,7 +26,7 @@
             <span class="mono-chip"><Icon name="hash" :size="11" />{{ school.slug }}</span>
             <span class="count-chip">
               <Icon name="users" :size="12" />
-              {{ school.studentCount }} student{{ school.studentCount !== 1 ? 's' : '' }}
+              {{ school.studentCount }} {{ (school.studentCount !== 1 ? entityLabelPlural : entityLabel).toLowerCase() }}
             </span>
           </div>
         </div>
@@ -36,7 +36,7 @@
       <div class="students-section fade-up fade-up-2" v-if="students.length">
         <div class="section-title">
           <Icon name="id-card" :size="13" />
-          <span>Published Students</span>
+          <span>Published {{ entityLabelPlural }}</span>
         </div>
         <div class="students-grid">
           <a
@@ -75,7 +75,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import Icon from '@/components/Icon.vue'
 
@@ -94,6 +94,18 @@ function avatarColor(name) {
   const i = (name || 'A').charCodeAt(0) % COLORS.length
   return `linear-gradient(135deg, ${COLORS[i]}, ${COLORS[(i + 2) % COLORS.length]})`
 }
+
+// ── Universal industry support ────────────────────────────────────────────────
+const entityLabel = computed(() => school.value?.entityLabel || 'Student')
+const entityLabelPlural = computed(() => school.value?.entityLabelPlural || 'Students')
+
+const INDUSTRY_ICONS = {
+  school: 'school', university: 'school', hospital: 'shield-check',
+  company: 'building', hotel: 'building', government: 'building',
+  church: 'users', ngo: 'users', gym: 'users', event: 'sparkles',
+  transport: 'link', custom: 'id-card',
+}
+const orgIcon = computed(() => INDUSTRY_ICONS[school.value?.industry] || 'school')
 
 onMounted(async () => {
   try {

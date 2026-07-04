@@ -72,7 +72,7 @@ function ask(rl, prompt, defaultVal) {
       console.log(`\n✓ Created admin "${username}".`);
     }
 
-    console.log('\n  You can now sign in at the Identity Cloud admin dashboard.');
+    console.log('\n  You can now sign in at:  http://localhost:5174/admin');
     console.log(`  Username: ${username}`);
     console.log(`  Password: ${password}\n`);
     process.exit(0);

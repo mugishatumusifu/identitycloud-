@@ -8,11 +8,14 @@
  * unchanged:
  *
  *   const db = await getDB();
- *   await db.organizations.findOne({ slug });
- *   await db.records.find({ orgSlug });
- *   await db.records.create({...});
- *   await db.records.findOneAndUpdate(filter, { $set: {...} });
+ *   await db.schools.findOne({ slug });
+ *   await db.students.find({ schoolSlug });
+ *   await db.students.create({...});
+ *   await db.students.findOneAndUpdate(filter, { $set: {...} });
  *   await db.save();   // no-op for Mongo (writes are immediate)
+ *
+ * No data is ever lost: legacy Loki data is preserved on disk and can be
+ * imported via `node scripts/migrate-loki-to-mongo.js`.
  */
 
 const path = require('path');
@@ -20,10 +23,10 @@ const fs   = require('fs');
 
 const { connectMongo, mongoose } = require('./mongo');
 
-const Organization = require('../models/Organization');
-const Record       = require('../models/Record');
-const Log          = require('../models/Log');
-const Admin        = require('../models/Admin');
+const School  = require('../models/School');
+const Student = require('../models/Student');
+const Log     = require('../models/Log');
+const Admin   = require('../models/Admin');
 
 // Kept so legacy code (admin secret file, migration script) still resolves paths.
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
@@ -41,21 +44,8 @@ function clean(doc) {
 }
 
 function buildQuery(filter = {}) {
-  // Map legacy fields to new fields in query
-  const query = { ...filter };
-  if (query.schoolSlug) {
-    query.orgSlug = query.schoolSlug;
-    delete query.schoolSlug;
-  }
-  if (query.studentId) {
-    query.recordId = query.studentId;
-    delete query.studentId;
-  }
-  if (query.class) {
-    query.category = query.class;
-    delete query.class;
-  }
-  return query;
+  // Mongoose understands the same operators ($in, $regex, $eq...). Pass through.
+  return filter || {};
 }
 
 function wrap(Model) {
@@ -141,12 +131,10 @@ let _dbPromise = null;
 async function initDB() {
   await connectMongo();
   const api = {
-    organizations: wrap(Organization),
-    schools:       wrap(Organization), // Alias for backward compatibility
-    records:       wrap(Record),
-    students:      wrap(Record),       // Alias for backward compatibility
-    logs:          wrap(Log),
-    admins:        wrap(Admin),
+    schools:  wrap(School),
+    students: wrap(Student),
+    logs:     wrap(Log),
+    admins:   wrap(Admin),
     _mongoose: mongoose,
     async save() { /* no-op for Mongo */ },
   };
@@ -158,4 +146,4 @@ async function getDB() {
   return _dbPromise;
 }
 
-module.exports = { getDB, DATA_DIR };
+module.exports = { getDB, DB_FILE, DATA_DIR };

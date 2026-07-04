@@ -1,5 +1,12 @@
 'use strict';
 
+/**
+ * Identity Cloud – Admin API
+ * --------------------------
+ * Mounted at /api/admin in app.js.
+ * Token format: base64url(payloadJSON) + "." + hex(HMAC-SHA256(payload, secret))
+ */
+
 const express = require('express');
 const crypto  = require('crypto');
 const fs      = require('fs');
@@ -10,6 +17,7 @@ const { deletePhoto: deleteCloudinaryPhoto } = require('./utils/cloudinary');
 
 const router = express.Router();
 
+// ── Secret resolution ────────────────────────────────────────────────────────
 const SECRET_FILE = path.join(DATA_DIR, '.admin-secret');
 function getSecret() {
   if (process.env.ADMIN_SECRET && process.env.ADMIN_SECRET.length >= 16) {
@@ -23,6 +31,7 @@ function getSecret() {
   return fresh;
 }
 
+// ── Token helpers ────────────────────────────────────────────────────────────
 function b64url(buf) {
   return Buffer.from(buf).toString('base64')
     .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
@@ -49,6 +58,7 @@ function verify(token) {
   } catch (_) { return null; }
 }
 
+// ── Middleware ───────────────────────────────────────────────────────────────
 function requireAdmin(req, res, next) {
   const auth = req.headers.authorization || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
@@ -58,6 +68,7 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// ── Logging helper (mirrors app.js writeLog) ─────────────────────────────────
 async function writeLog(action, entity, message, metadata = {}) {
   try {
     const db = await getDB();
@@ -65,12 +76,55 @@ async function writeLog(action, entity, message, metadata = {}) {
   } catch (_) {}
 }
 
-async function deleteCloudinaryFor(record) {
-  if (!record) return;
-  if (record.photoPublicId) {
-    try { await deleteCloudinaryPhoto(record.photoPublicId); } catch (_) {}
+// ── Photo cleanup helper ─────────────────────────────────────────────────────
+const PHOTOS_DIR = path.join(__dirname, 'uploads', 'photos');
+function deletePhotoFor(schoolSlug, studentId) {
+  try {
+    const safeId = String(studentId).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const prefix = `${schoolSlug}_${safeId}.`;
+    if (!fs.existsSync(PHOTOS_DIR)) return;
+    for (const f of fs.readdirSync(PHOTOS_DIR)) {
+      if (f.startsWith(prefix)) {
+        try { fs.unlinkSync(path.join(PHOTOS_DIR, f)); } catch (_) {}
+      }
+    }
+  } catch (_) {}
+}
+
+// Delete the Cloudinary asset for a student (best-effort).
+async function deleteCloudinaryFor(student) {
+  if (!student) return;
+  if (student.photoPublicId) {
+    try { await deleteCloudinaryPhoto(student.photoPublicId); } catch (_) {}
   }
 }
+
+// ── Industry reference (mirrors CardNova Studio's industry keys/labels) ───────
+// Used to populate admin dropdowns and as a fallback for entity labels when a
+// publish request doesn't specify one explicitly.
+const INDUSTRIES = {
+  school:     { label: 'School',            entityLabel: 'Student',  entityLabelPlural: 'Students' },
+  hospital:   { label: 'Hospital',          entityLabel: 'Patient',  entityLabelPlural: 'Patients' },
+  company:    { label: 'Company',           entityLabel: 'Employee', entityLabelPlural: 'Employees' },
+  church:     { label: 'Church',            entityLabel: 'Member',   entityLabelPlural: 'Members' },
+  ngo:        { label: 'NGO / Non-Profit',  entityLabel: 'Member',   entityLabelPlural: 'Members' },
+  university: { label: 'University',        entityLabel: 'Student',  entityLabelPlural: 'Students' },
+  event:      { label: 'Event',             entityLabel: 'Attendee', entityLabelPlural: 'Attendees' },
+  transport:  { label: 'Transport',         entityLabel: 'Driver',   entityLabelPlural: 'Drivers' },
+  gym:        { label: 'Gym / Fitness',     entityLabel: 'Member',   entityLabelPlural: 'Members' },
+  hotel:      { label: 'Hotel',             entityLabel: 'Staff',    entityLabelPlural: 'Staff' },
+  government: { label: 'Government',        entityLabel: 'Official', entityLabelPlural: 'Officials' },
+  education:  { label: 'Education',         entityLabel: 'Student',  entityLabelPlural: 'Students' }, // legacy default
+  custom:     { label: 'Custom',            entityLabel: 'Record',   entityLabelPlural: 'Records' },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  GET /api/admin/meta/industries
+// ═══════════════════════════════════════════════════════════════════════════
+router.get('/meta/industries', requireAdmin, (_req, res) => {
+  res.json(Object.entries(INDUSTRIES).map(([key, v]) => ({ key, ...v })));
+});
+
 
 router.post('/login', async (req, res) => {
   try {
@@ -95,16 +149,22 @@ router.post('/login', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  Verify session
+// ═══════════════════════════════════════════════════════════════════════════
 router.get('/me', requireAdmin, (req, res) => {
   res.json({ username: req.admin.username, expiresAt: req.admin.exp });
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  GET /api/admin/overview
+// ═══════════════════════════════════════════════════════════════════════════
 router.get('/overview', requireAdmin, async (_req, res) => {
   try {
     const db = await getDB();
-    const [orgs, records, logs] = await Promise.all([
-      db.organizations.find({}),
-      db.records.find({}),
+    const [schools, students, logs] = await Promise.all([
+      db.schools.find({}),
+      db.students.find({}),
       db.logs.find({}),
     ]);
 
@@ -113,10 +173,24 @@ router.get('/overview', requireAdmin, async (_req, res) => {
     const dayAgo = Date.now() - 86400000;
     let scans24h = 0;
 
-    for (const r of records) {
-      counts[r.status] = (counts[r.status] || 0) + 1;
-      totalScans += r.scanCount || 0;
-      if (r.lastScannedAt && new Date(r.lastScannedAt).getTime() > dayAgo) scans24h++;
+    for (const s of students) {
+      counts[s.status] = (counts[s.status] || 0) + 1;
+      totalScans += s.scanCount || 0;
+      if (s.lastScannedAt && new Date(s.lastScannedAt).getTime() > dayAgo) scans24h++;
+    }
+
+    // Per-industry breakdown — additive stat, existing `totals` shape is untouched.
+    const byIndustry = {};
+    for (const sc of schools) {
+      const key = sc.industry || 'education';
+      byIndustry[key] = byIndustry[key] || { projects: 0, records: 0 };
+      byIndustry[key].projects++;
+    }
+    for (const s of students) {
+      const owner = schools.find(sc => sc.slug === s.schoolSlug);
+      const key = owner?.industry || 'education';
+      byIndustry[key] = byIndustry[key] || { projects: 0, records: 0 };
+      byIndustry[key].records++;
     }
 
     const recent = logs
@@ -124,11 +198,10 @@ router.get('/overview', requireAdmin, async (_req, res) => {
       .slice(0, 12);
 
     res.json({
+      byIndustry,
       totals: {
-        orgs: orgs.length,
-        schools: orgs.length, // backward compat
-        records: records.length,
-        students: records.length, // backward compat
+        schools: schools.length,
+        students: students.length,
         active: counts.active || 0,
         expired: counts.expired || 0,
         revoked: counts.revoked || 0,
@@ -142,88 +215,32 @@ router.get('/overview', requireAdmin, async (_req, res) => {
   }
 });
 
-router.get('/orgs', requireAdmin, async (_req, res) => {
+// ═══════════════════════════════════════════════════════════════════════════
+//  GET /api/admin/schools
+// ═══════════════════════════════════════════════════════════════════════════
+router.get('/schools', requireAdmin, async (_req, res) => {
   try {
     const db = await getDB();
-    const orgs = await db.organizations.find({});
-    const allRecords = await db.records.find({});
+    const schools = await db.schools.find({});
+    const allStudents = await db.students.find({});
     const grouped = {};
-    for (const r of allRecords) {
-      grouped[r.orgSlug] = grouped[r.orgSlug] || { total: 0, active: 0 };
-      grouped[r.orgSlug].total++;
-      if (r.status === 'active') grouped[r.orgSlug].active++;
+    for (const s of allStudents) {
+      grouped[s.schoolSlug] = grouped[s.schoolSlug] || { total: 0, active: 0 };
+      grouped[s.schoolSlug].total++;
+      if (s.status === 'active') grouped[s.schoolSlug].active++;
     }
-    const out = orgs.map(org => ({
-      ...org,
-      recordCount: grouped[org.slug]?.total || 0,
-      activeCount: grouped[org.slug]?.active || 0,
-      studentCount: grouped[org.slug]?.total || 0, // backward compat
+    const out = schools.map(sc => ({
+      ...sc,
+      studentCount: grouped[sc.slug]?.total || 0,
+      activeCount:  grouped[sc.slug]?.active || 0,
     })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     res.json(out);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Alias for backward compatibility
-router.get('/schools', requireAdmin, async (req, res) => {
-  try {
-    const db = await getDB();
-    const orgs = await db.organizations.find({});
-    const allRecords = await db.records.find({});
-    const grouped = {};
-    for (const r of allRecords) {
-      grouped[r.orgSlug] = grouped[r.orgSlug] || { total: 0, active: 0 };
-      grouped[r.orgSlug].total++;
-      if (r.status === 'active') grouped[r.orgSlug].active++;
-    }
-    const out = orgs.map(org => ({
-      ...org,
-      slug: org.slug,
-      name: org.name,
-      themeColor: org.themeColor,
-      logo: org.logo,
-      studentCount: grouped[org.slug]?.total || 0,
-      activeCount: grouped[org.slug]?.active || 0,
-    })).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-    res.json(out);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-router.get('/orgs/:slug', requireAdmin, async (req, res) => {
-  try {
-    const db = await getDB();
-    const slug   = req.params.slug;
-    const page   = Math.max(1, parseInt(req.query.page,  10) || 1);
-    const limit  = Math.min(100, Math.max(10, parseInt(req.query.limit, 10) || 50));
-    const search = (req.query.search || '').trim();
-    const status = (req.query.status || '').trim();
-
-    const org = await db.organizations.findOne({ slug });
-    if (!org) return res.status(404).json({ error: 'Organization not found' });
-
-    const filter = { orgSlug: slug };
-    if (status) filter.status = status;
-    if (search) filter.$or = [
-      { fullName:  { $regex: search, $options: 'i' } },
-      { recordId:  { $regex: search, $options: 'i' } },
-      { category:  { $regex: search, $options: 'i' } },
-    ];
-
-    const { docs: records, total } = await db.records.findPaginated(
-      filter, { skip: (page - 1) * limit, limit, sort: { fullName: 1 } }
-    );
-
-    res.json({
-      org,
-      organization: org,
-      school: org, // backward compat
-      records,
-      students: records, // backward compat
-      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
-    });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// Alias for backward compatibility
+// ═══════════════════════════════════════════════════════════════════════════
+//  GET /api/admin/schools/:slug
+// ═══════════════════════════════════════════════════════════════════════════
 router.get('/schools/:slug', requireAdmin, async (req, res) => {
   try {
     const db = await getDB();
@@ -233,179 +250,161 @@ router.get('/schools/:slug', requireAdmin, async (req, res) => {
     const search = (req.query.search || '').trim();
     const status = (req.query.status || '').trim();
 
-    const org = await db.organizations.findOne({ slug });
-    if (!org) return res.status(404).json({ error: 'School not found' });
+    const school = await db.schools.findOne({ slug });
+    if (!school) return res.status(404).json({ error: 'School not found' });
 
-    const filter = { orgSlug: slug };
+    const filter = { schoolSlug: slug };
     if (status) filter.status = status;
     if (search) filter.$or = [
       { fullName:  { $regex: search, $options: 'i' } },
-      { recordId:  { $regex: search, $options: 'i' } },
-      { category:  { $regex: search, $options: 'i' } },
+      { studentId: { $regex: search, $options: 'i' } },
+      { class:     { $regex: search, $options: 'i' } },
     ];
 
-    const { docs: records, total } = await db.records.findPaginated(
+    const { docs: students, total } = await db.students.findPaginated(
       filter, { skip: (page - 1) * limit, limit, sort: { fullName: 1 } }
     );
 
     res.json({
-      school: org,
-      students: records,
+      school,
+      students,
       pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.patch('/orgs/:slug', requireAdmin, async (req, res) => {
-  try {
-    const db = await getDB();
-    const slug = req.params.slug;
-    const { name, themeColor, logo, industry } = req.body || {};
-    const update = {};
-    if (typeof name === 'string' && name.trim()) update.name = name.trim();
-    if (typeof themeColor === 'string') update.themeColor = themeColor;
-    if (typeof logo === 'string' || logo === null) update.logo = logo;
-    if (typeof industry === 'string') update.industry = industry;
-
-    const org = await db.organizations.findOneAndUpdate({ slug }, { $set: update });
-    if (!org) return res.status(404).json({ error: 'Organization not found' });
-    await writeLog('UPDATE', 'ORGANIZATION', `Updated organization "${slug}"`, { slug, fields: Object.keys(update) });
-    res.json(org);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// Alias for backward compatibility
+// ═══════════════════════════════════════════════════════════════════════════
+//  PATCH /api/admin/schools/:slug
+// ═══════════════════════════════════════════════════════════════════════════
 router.patch('/schools/:slug', requireAdmin, async (req, res) => {
   try {
     const db = await getDB();
     const slug = req.params.slug;
-    const { name, themeColor, logo } = req.body || {};
+    const { name, themeColor, logo, industry, entityLabel, entityLabelPlural, fieldDefinitions } = req.body || {};
     const update = {};
     if (typeof name === 'string' && name.trim()) update.name = name.trim();
     if (typeof themeColor === 'string') update.themeColor = themeColor;
     if (typeof logo === 'string' || logo === null) update.logo = logo;
-
-    const org = await db.organizations.findOneAndUpdate({ slug }, { $set: update });
-    if (!org) return res.status(404).json({ error: 'School not found' });
-    await writeLog('UPDATE', 'ORGANIZATION', `Updated organization "${slug}"`, { slug, fields: Object.keys(update) });
-    res.json(org);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-router.delete('/orgs/:slug', requireAdmin, async (req, res) => {
-  try {
-    const db = await getDB();
-    const slug = req.params.slug;
-    const org = await db.organizations.findOne({ slug });
-    if (!org) return res.status(404).json({ error: 'Organization not found' });
-
-    const records = await db.records.find({ orgSlug: slug });
-    for (const r of records) {
-      await deleteCloudinaryFor(r);
+    if (typeof industry === 'string' && industry.trim()) update.industry = industry.trim();
+    if (typeof entityLabel === 'string' && entityLabel.trim()) update.entityLabel = entityLabel.trim();
+    if (typeof entityLabelPlural === 'string' && entityLabelPlural.trim()) update.entityLabelPlural = entityLabelPlural.trim();
+    if (Array.isArray(fieldDefinitions)) {
+      update.fieldDefinitions = fieldDefinitions
+        .filter(f => f && typeof f.key === 'string' && f.key.trim())
+        .map(f => ({
+          key: String(f.key).trim(),
+          label: String(f.label || f.key).trim(),
+          type: String(f.type || 'text'),
+          showOnCard: f.showOnCard !== false,
+        }));
     }
 
-    const { deletedCount } = await db.records.deleteMany({ orgSlug: slug });
-    await db.organizations.findOneAndDelete({ slug });
-    await writeLog('DELETE', 'ORGANIZATION', `Deleted organization "${slug}" and ${deletedCount} records`, { slug });
-    res.json({ success: true, deletedRecords: deletedCount });
+    const school = await db.schools.findOneAndUpdate({ slug }, { $set: update });
+    if (!school) return res.status(404).json({ error: 'School not found' });
+    await writeLog('UPDATE', 'SCHOOL', `Updated school "${slug}"`, { slug, fields: Object.keys(update) });
+    res.json(school);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Alias for backward compatibility
+// ═══════════════════════════════════════════════════════════════════════════
+//  DELETE /api/admin/schools/:slug  (cascade)
+// ═══════════════════════════════════════════════════════════════════════════
 router.delete('/schools/:slug', requireAdmin, async (req, res) => {
   try {
     const db = await getDB();
     const slug = req.params.slug;
-    const org = await db.organizations.findOne({ slug });
-    if (!org) return res.status(404).json({ error: 'School not found' });
+    const school = await db.schools.findOne({ slug });
+    if (!school) return res.status(404).json({ error: 'School not found' });
 
-    const records = await db.records.find({ orgSlug: slug });
-    for (const r of records) {
-      await deleteCloudinaryFor(r);
+    const students = await db.students.find({ schoolSlug: slug });
+    for (const s of students) {
+      deletePhotoFor(slug, s.studentId);   // legacy disk cleanup (no-op if missing)
+      await deleteCloudinaryFor(s);        // Cloudinary cleanup
     }
 
-    const { deletedCount } = await db.records.deleteMany({ orgSlug: slug });
-    await db.organizations.findOneAndDelete({ slug });
-    await writeLog('DELETE', 'ORGANIZATION', `Deleted organization "${slug}" and ${deletedCount} records`, { slug });
+    const { deletedCount } = await db.students.deleteMany({ schoolSlug: slug });
+    await db.schools.findOneAndDelete({ slug });
+    await db.save();
+    await writeLog('DELETE', 'SCHOOL', `Deleted school "${slug}" and ${deletedCount} students`, { slug });
     res.json({ success: true, deletedStudents: deletedCount });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.patch('/orgs/:slug/records/:recordId', requireAdmin, async (req, res) => {
-  try {
-    const db = await getDB();
-    const { slug, recordId } = req.params;
-    const safeRecordId = decodeURIComponent(recordId);
-    const allowed = ['fullName', 'category', 'entityType', 'status', 'expiresAt', 'photoUrl', 'metadata'];
-    const update = {};
-    for (const k of allowed) if (k in (req.body || {})) update[k] = req.body[k];
-
-    const record = await db.records.findOneAndUpdate(
-      { orgSlug: slug, recordId: safeRecordId },
-      { $set: update }
-    );
-    if (!record) return res.status(404).json({ error: 'Record not found' });
-    await writeLog('UPDATE', 'RECORD', `Updated record ${safeRecordId} @ ${slug}`,
-      { slug, recordId: safeRecordId, fields: Object.keys(update) });
-    res.json(record);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// Alias for backward compatibility
+// ═══════════════════════════════════════════════════════════════════════════
+//  PATCH /api/admin/schools/:slug/students/:studentId
+// ═══════════════════════════════════════════════════════════════════════════
 router.patch('/schools/:slug/students/:studentId', requireAdmin, async (req, res) => {
   try {
     const db = await getDB();
     const { slug, studentId } = req.params;
-    const safeRecordId = decodeURIComponent(studentId);
-    const allowed = ['fullName', 'class', 'status', 'expiresAt', 'photoUrl'];
+    const safeStudentId = decodeURIComponent(studentId);
+    const allowed = ['fullName', 'class', 'status', 'expiresAt', 'photoUrl', 'entityType'];
     const update = {};
-    for (const k of allowed) {
-      if (k === 'class') {
-        if (k in (req.body || {})) update.category = req.body[k];
-      } else {
-        if (k in (req.body || {})) update[k] = req.body[k];
-      }
+    for (const k of allowed) if (k in (req.body || {})) update[k] = req.body[k];
+    // Dynamic fields: merge (not replace) so partial updates from the admin
+    // UI don't wipe out fields the request didn't mention.
+    if (req.body && req.body.data && typeof req.body.data === 'object') {
+      const existingStudent = await db.students.findOne({ schoolSlug: slug, studentId: safeStudentId });
+      update.data = { ...(existingStudent?.data || {}), ...req.body.data };
     }
 
-    const record = await db.records.findOneAndUpdate(
-      { orgSlug: slug, recordId: safeRecordId },
+    const student = await db.students.findOneAndUpdate(
+      { schoolSlug: slug, studentId: safeStudentId },
       { $set: update }
     );
-    if (!record) return res.status(404).json({ error: 'Student not found' });
-    await writeLog('UPDATE', 'RECORD', `Updated record ${safeRecordId} @ ${slug}`,
-      { slug, recordId: safeRecordId, fields: Object.keys(update) });
-    res.json(record);
+    if (!student) return res.status(404).json({ error: 'Student not found' });
+    await writeLog('UPDATE', 'STUDENT', `Updated student ${safeStudentId} @ ${slug}`,
+      { slug, studentId: safeStudentId, fields: Object.keys(update) });
+    res.json(student);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.delete('/orgs/:slug/records/:recordId', requireAdmin, async (req, res) => {
+// ═══════════════════════════════════════════════════════════════════════════
+//  POST /api/admin/schools/:slug/students/:studentId/revoke|restore
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/schools/:slug/students/:studentId/:action(revoke|restore)', requireAdmin, async (req, res) => {
   try {
     const db = await getDB();
-    const { slug, recordId } = req.params;
-    const safeRecordId = decodeURIComponent(recordId);
-    const record = await db.records.findOne({ orgSlug: slug, recordId: safeRecordId });
-    if (!record) return res.status(404).json({ error: 'Record not found' });
-
-    await deleteCloudinaryFor(record);
-    await db.records.findOneAndDelete({ orgSlug: slug, recordId: safeRecordId });
-    await writeLog('DELETE', 'RECORD', `Deleted record ${safeRecordId} @ ${slug}`, { slug, recordId: safeRecordId });
-    res.json({ success: true });
+    const { slug, studentId, action } = req.params;
+    const safeStudentId = decodeURIComponent(studentId);
+    const newStatus = action === 'revoke' ? 'revoked' : 'active';
+    const student = await db.students.findOneAndUpdate(
+      { schoolSlug: slug, studentId: safeStudentId },
+      { $set: { status: newStatus } }
+    );
+    if (!student) return res.status(404).json({ error: 'Student not found' });
+    await writeLog(action.toUpperCase(), 'STUDENT', `${action} ${safeStudentId} @ ${slug}`, { slug, studentId: safeStudentId });
+    res.json(student);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Alias for backward compatibility
+// ═══════════════════════════════════════════════════════════════════════════
+//  DELETE /api/admin/schools/:slug/students/:studentId
+// ═══════════════════════════════════════════════════════════════════════════
 router.delete('/schools/:slug/students/:studentId', requireAdmin, async (req, res) => {
   try {
     const db = await getDB();
     const { slug, studentId } = req.params;
-    const safeRecordId = decodeURIComponent(studentId);
-    const record = await db.records.findOne({ orgSlug: slug, recordId: safeRecordId });
-    if (!record) return res.status(404).json({ error: 'Student not found' });
-
-    await deleteCloudinaryFor(record);
-    await db.records.findOneAndDelete({ orgSlug: slug, recordId: safeRecordId });
-    await writeLog('DELETE', 'RECORD', `Deleted record ${safeRecordId} @ ${slug}`, { slug, recordId: safeRecordId });
+    const safeStudentId = decodeURIComponent(studentId);
+    const removed = await db.students.findOneAndDelete({ schoolSlug: slug, studentId: safeStudentId });
+    if (!removed) return res.status(404).json({ error: 'Student not found' });
+    deletePhotoFor(slug, safeStudentId);
+    await deleteCloudinaryFor(removed);
+    await db.save();
+    await writeLog('DELETE', 'STUDENT', `Deleted student ${safeStudentId} @ ${slug}`, { slug, studentId: safeStudentId });
     res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  GET /api/admin/logs?limit=
+// ═══════════════════════════════════════════════════════════════════════════
+router.get('/logs', requireAdmin, async (req, res) => {
+  try {
+    const db = await getDB();
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+    const logs = await db.logs.find({});
+    res.json(logs.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || '')).slice(0, limit));
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

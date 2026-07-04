@@ -1,12 +1,13 @@
 {
   "name": "identity-cloud-backend",
   "version": "2.0.0",
-  "description": "Identity Cloud – Universal QR-Based Identity Verification Backend (MongoDB + Cloudinary)",
+  "description": "Identity Cloud – QR-Based Student Identity Verification Backend (MongoDB + Cloudinary)",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
     "dev": "nodemon app.js",
     "migrate:loki-to-mongo": "node scripts/migrate-loki-to-mongo.js",
+    "backfill:industry-metadata": "node scripts/backfill-industry-metadata.js",
     "create-admin": "node create-admin.js"
   },
   "dependencies": {

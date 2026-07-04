@@ -14,6 +14,16 @@ const StudentSchema = new mongoose.Schema(
     expiresAt:     { type: String, default: null },
     scanCount:     { type: Number, default: 0 },
     lastScannedAt: { type: String, default: null },
+
+    // ── Universal record support (additive, all optional) ──────────────────
+    // entityType: machine key for the kind of record within its project's
+    // industry, e.g. "patient", "employee", "attendee". Defaults to "student"
+    // so every pre-existing document keeps behaving exactly as before.
+    entityType: { type: String, default: 'student', index: true, trim: true },
+    // data: free-form bag holding any industry-specific fields that don't
+    // have a first-class column (e.g. department, ward, badgeLevel...).
+    // `class` remains a first-class field for education records/back-compat.
+    data:       { type: mongoose.Schema.Types.Mixed, default: {} },
   },
   { timestamps: true }
 );

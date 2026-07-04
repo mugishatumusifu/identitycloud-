@@ -9,8 +9,8 @@
 
       <h1 class="hero-title">Identity Cloud</h1>
       <p class="hero-sub">
-        Scan a student's QR code or enter a verification path to view their live identity card —
-        instantly, securely, and from any device.
+        Scan a QR code or enter a verification path to view any live identity card —
+        instantly, securely, and from any device, for any industry.
       </p>
 
       <div class="verify-box">
@@ -23,7 +23,7 @@
           <input
             v-model="path"
             class="verify-input"
-            placeholder="school-name/STU-00001"
+            placeholder="project-name/ID-00001"
             @keyup.enter="goVerify"
           />
           <button class="verify-btn" @click="goVerify" :disabled="!path.trim()">
@@ -53,14 +53,14 @@
         <div class="stat-icon"><Icon name="building" :size="18" /></div>
         <div>
           <div class="stat-num">{{ stats.totalSchools }}</div>
-          <div class="stat-label">Schools</div>
+          <div class="stat-label">Projects</div>
         </div>
       </div>
       <div class="stat-item glass-card">
         <div class="stat-icon"><Icon name="users" :size="18" /></div>
         <div>
           <div class="stat-num">{{ stats.totalStudents }}</div>
-          <div class="stat-label">Students</div>
+          <div class="stat-label">Records</div>
         </div>
       </div>
       <div class="stat-item glass-card">
@@ -86,10 +86,10 @@ const error  = ref('')
 const stats  = ref(null)
 
 const features = [
-  { icon: 'qr-code',      color: '#00b4d8', title: 'QR Scan Verification', desc: 'Scan any student QR code to instantly verify their identity in real-time.' },
+  { icon: 'qr-code',      color: '#00b4d8', title: 'QR Scan Verification', desc: 'Scan any QR code to instantly verify an identity in real-time.' },
   { icon: 'shield-check', color: '#06d6a0', title: 'Live Status',          desc: 'Active, expired, or revoked status updated automatically based on expiry date.' },
   { icon: 'activity',     color: '#7b61ff', title: 'Scan Tracking',        desc: 'Every verification is logged with scan count and last scanned timestamp.' },
-  { icon: 'school',       color: '#0077b6', title: 'Multi-School',         desc: 'Each school has its own namespace. Students are isolated per school slug.' },
+  { icon: 'building',     color: '#0077b6', title: 'Any Industry',         desc: 'Each project has its own namespace, entity types, and fields — schools, hospitals, companies, events, and more.' },
 ]
 
 function goVerify() {
@@ -97,7 +97,7 @@ function goVerify() {
   if (!trimmed) return
   const parts = trimmed.replace(/^\//, '').split('/')
   if (parts.length < 2) {
-    error.value = 'Please enter a path like: school-name/STU-00001'
+    error.value = 'Please enter a path like: project-name/ID-00001'
     return
   }
   error.value = ''
