@@ -35,29 +35,29 @@
 
         <!-- Header section -->
         <div class="card-header">
-          <div class="photo-wrap" :class="`status-${data.student.status}`">
+          <div class="photo-wrap" :class="`status-${data.record.status}`">
             <img
-              v-if="data.student.photoUrl && !photoErr"
-              :src="data.student.photoUrl"
-              :alt="data.student.fullName"
+              v-if="data.record.photoUrl && !photoErr"
+              :src="data.record.photoUrl"
+              :alt="data.record.fullName"
               class="student-photo"
               @error="photoErr = true"
             />
             <div v-else class="photo-placeholder">{{ initials }}</div>
-            <div class="status-ring" :class="`ring-${data.student.status}`"></div>
-            <div class="status-corner" :class="`corner-${data.student.status}`">
+            <div class="status-ring" :class="`ring-${data.record.status}`"></div>
+            <div class="status-corner" :class="`corner-${data.record.status}`">
               <Icon :name="statusIcon" :size="14" />
             </div>
           </div>
 
           <div class="header-info">
             <div class="school-name fade-up fade-up-1">
-              <Icon name="school" :size="13" />
-              {{ data.school.name }}
+              <Icon :name="industryIcon" :size="13" />
+              {{ data.organization.name }}
             </div>
-            <h1 class="student-name fade-up fade-up-2">{{ data.student.fullName }}</h1>
+            <h1 class="student-name fade-up fade-up-2">{{ data.record.fullName }}</h1>
             <div class="status-badge-wrap fade-up fade-up-3">
-              <span class="badge" :class="`badge-${data.student.status}`">
+              <span class="badge" :class="`badge-${data.record.status}`">
                 <span class="badge-dot"></span>
                 {{ statusLabel }}
               </span>
@@ -78,15 +78,15 @@
             <span>Identity Details</span>
           </div>
           <div class="details-grid">
-            <DetailItem icon="hash"     label="Student ID" :value="data.student.studentId" mono />
-            <DetailItem v-if="data.student.class" icon="graduate" label="Class" :value="data.student.class" />
-            <DetailItem icon="calendar" label="Issued" :value="formatDate(data.student.issuedAt)" />
-            <DetailItem v-if="data.student.expiresAt" icon="hourglass" label="Expires" :value="formatDate(data.student.expiresAt)" />
+            <DetailItem icon="hash" :label="idLabel" :value="data.record.recordId" mono />
+            <DetailItem v-if="data.record.category" icon="list" :label="categoryLabel" :value="data.record.category" />
+            <DetailItem icon="calendar" label="Issued" :value="formatDate(data.record.issuedAt)" />
+            <DetailItem v-if="data.record.expiresAt" icon="hourglass" label="Expires" :value="formatDate(data.record.expiresAt)" />
             <DetailItem
-              v-if="data.student.remainingDays !== null"
+              v-if="data.record.remainingDays !== null"
               icon="clock"
               label="Remaining"
-              :value="data.student.remainingDays === 0 ? 'Expires today' : `${data.student.remainingDays} day${data.student.remainingDays === 1 ? '' : 's'}`"
+              :value="data.record.remainingDays === 0 ? 'Expires today' : `${data.record.remainingDays} day${data.record.remainingDays === 1 ? '' : 's'}`"
             />
             <DetailItem icon="shield-check" label="Status" :value="statusLabel" />
           </div>
@@ -102,14 +102,14 @@
             <div class="verify-stat">
               <div class="verify-stat-icon"><Icon name="scan" :size="16" /></div>
               <div>
-                <div class="verify-stat-num">{{ data.student.scanCount || 0 }}</div>
+                <div class="verify-stat-num">{{ data.record.scanCount || 0 }}</div>
                 <div class="verify-stat-label">Total Scans</div>
               </div>
             </div>
             <div class="verify-stat">
               <div class="verify-stat-icon"><Icon name="clock" :size="16" /></div>
               <div>
-                <div class="verify-stat-num">{{ formatRelative(data.student.lastScannedAt) }}</div>
+                <div class="verify-stat-num">{{ formatRelative(data.record.lastScannedAt) }}</div>
                 <div class="verify-stat-label">Last Verified</div>
               </div>
             </div>
@@ -174,19 +174,19 @@ const photoErr = ref(false)
 const copied   = ref(false)
 
 const initials = computed(() => {
-  if (!data.value?.student?.fullName) return '?'
-  return data.value.student.fullName.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase()
+  if (!data.value?.record?.fullName) return '?'
+  return data.value.record.fullName.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase()
 })
 
 const statusLabel = computed(() => {
-  const s = data.value?.student?.status
+  const s = data.value?.record?.status
   if (s === 'active')  return 'Active'
   if (s === 'expired') return 'Expired'
   if (s === 'revoked') return 'Revoked'
   return s || 'Unknown'
 })
 const statusSubLabel = computed(() => {
-  const st = data.value?.student
+  const st = data.value?.record
   if (!st) return ''
   if (st.status === 'active' && st.expiresAt) return `Valid until ${formatDate(st.expiresAt)}`
   if (st.status === 'expired') return 'This identity has expired'
@@ -194,19 +194,60 @@ const statusSubLabel = computed(() => {
   return ''
 })
 const statusIcon = computed(() => {
-  const s = data.value?.student?.status
+  const s = data.value?.record?.status
   if (s === 'active')  return 'check'
   if (s === 'expired') return 'hourglass'
   if (s === 'revoked') return 'x'
   return 'circle'
 })
 
-const themeColor = computed(() => data.value?.school?.themeColor || '#00b4d8')
+const industryIcon = computed(() => {
+  const ind = data.value?.organization?.industry || 'school'
+  const icons = {
+    school: 'school',
+    hospital: 'hospital',
+    company: 'company',
+    church: 'church',
+    ngo: 'ngo',
+    university: 'school',
+    event: 'event',
+    transport: 'transport',
+    gym: 'activity',
+    hotel: 'company',
+    government: 'shield-check',
+    custom: 'id-card'
+  }
+  return icons[ind] || 'company'
+})
+
+const idLabel = computed(() => {
+  const ind = data.value?.organization?.industry || 'school'
+  if (ind === 'school' || ind === 'university') return 'Student ID'
+  if (ind === 'hospital') return 'Patient ID'
+  if (ind === 'company' || ind === 'hotel') return 'Employee ID'
+  if (ind === 'church') return 'Member ID'
+  if (ind === 'event') return 'Ticket ID'
+  if (ind === 'transport') return 'Permit ID'
+  return 'Record ID'
+})
+
+const categoryLabel = computed(() => {
+  const ind = data.value?.organization?.industry || 'school'
+  if (ind === 'school' || ind === 'university') return 'Class'
+  if (ind === 'hospital') return 'Ward'
+  if (ind === 'company' || ind === 'hotel') return 'Department'
+  if (ind === 'church') return 'Ministry'
+  if (ind === 'event') return 'Zone'
+  if (ind === 'transport') return 'Route'
+  return 'Category'
+})
+
+const themeColor = computed(() => data.value?.organization?.themeColor || '#00b4d8')
 const themeGradient = computed(() => `linear-gradient(90deg, ${themeColor.value}cc, ${themeColor.value}44)`)
 const cardAccentVars = computed(() => ({ '--card-accent': themeColor.value }))
 
 const validityPercent = computed(() => {
-  const st = data.value?.student
+  const st = data.value?.record
   if (!st?.issuedAt || !st?.expiresAt || st.status !== 'active') return null
   const issued = new Date(st.issuedAt).getTime()
   const expires = new Date(st.expiresAt).getTime()
@@ -246,8 +287,7 @@ onMounted(async () => {
     const { data: result } = await axios.get(
       `/api/verify/${encodeURIComponent(props.schoolSlug)}/${encodeURIComponent(props.studentId)}`
     )
-    // Guard against unexpected HTML responses (e.g. misconfigured proxy)
-    if (!result || typeof result !== 'object' || !result.student) {
+    if (!result || typeof result !== 'object' || !result.record) {
       throw new Error('Invalid response from verification server')
     }
     data.value = result
@@ -376,197 +416,124 @@ onMounted(async () => {
 .corner-expired { background: var(--status-expired); }
 .corner-revoked { background: var(--status-revoked); }
 
-.header-info {
-  flex: 1;
-  display: flex; flex-direction: column; gap: 8px;
-  padding-top: 4px;
-  min-width: 0;
-}
+.header-info { flex: 1; padding-top: 4px; }
 .school-name {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-size: 0.74rem; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.07em;
+  display: flex; align-items: center; gap: 6px;
+  font-size: 0.8rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.05em;
   color: var(--text-muted);
+  margin-bottom: 6px;
 }
 .student-name {
-  font-size: 1.7rem; font-weight: 700;
-  line-height: 1.15;
+  font-size: 1.6rem; font-weight: 800;
+  letter-spacing: -0.03em; line-height: 1.2;
   color: var(--text-primary);
-  letter-spacing: -0.025em;
+  margin-bottom: 12px;
 }
-.status-badge-wrap {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+.status-badge-wrap { display: flex; align-items: center; gap: 10px; }
+.badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 12px; border-radius: 999px;
+  font-size: 0.75rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.04em;
 }
-.badge { display: inline-flex; align-items: center; gap: 6px; }
-.badge-dot {
-  width: 6px; height: 6px; border-radius: 50%;
-  background: currentColor;
-}
-.status-sub {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  font-weight: 500;
-}
+.badge-dot { width: 6px; height: 6px; border-radius: 50%; }
+.badge-active  { background: rgba(6,214,160,0.12); color: var(--status-active); }
+.badge-active .badge-dot { background: var(--status-active); }
+.badge-expired { background: rgba(239,71,111,0.1); color: var(--status-expired); }
+.badge-expired .badge-dot { background: var(--status-expired); }
+.badge-revoked { background: rgba(255,149,0,0.1); color: var(--status-revoked); }
+.badge-revoked .badge-dot { background: var(--status-revoked); }
+.status-sub { font-size: 0.78rem; color: var(--text-muted); font-weight: 500; }
 
-/* ── Validity bar ──────────────────────────────────────────────────────────── */
+/* ── Validity Bar ──────────────────────────────────────────────────────────── */
 .validity-bar {
-  height: 4px;
-  background: rgba(0,0,0,0.04);
-  margin: 0 28px;
-  border-radius: 999px;
-  overflow: hidden;
+  height: 4px; background: rgba(0,0,0,0.04);
+  margin: 0 28px; border-radius: 2px; overflow: hidden;
 }
-.validity-fill {
-  height: 100%;
-  border-radius: 999px;
-  transition: width 0.6s ease;
-}
+.validity-fill { height: 100%; transition: width 1s ease-out; }
 
 /* ── Details ───────────────────────────────────────────────────────────────── */
-.details-section {
-  padding: 22px 28px 20px;
-  border-top: 1px solid rgba(0,0,0,0.05);
-  margin-top: 16px;
-}
+.details-section { padding: 24px 28px; }
 .section-label {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.7rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--text-muted);
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 .details-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 10px;
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 16px 20px;
 }
-:deep(.detail-item) {
-  display: flex; align-items: flex-start; gap: 10px;
-  padding: 12px 14px;
-  background: rgba(255,255,255,0.55);
-  border: 1px solid rgba(255,255,255,0.7);
-  border-radius: 14px;
-}
+:deep(.detail-item) { display: flex; align-items: flex-start; gap: 12px; }
 :deep(.detail-icon) {
-  width: 30px; height: 30px;
-  border-radius: 9px;
-  background: rgba(0,180,216,0.12);
-  color: var(--accent-2);
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
+  margin-top: 2px; color: var(--card-accent); opacity: 0.8;
 }
-:deep(.detail-body) { flex: 1; min-width: 0; }
-:deep(.detail-label) {
-  font-size: 0.66rem; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.06em;
-  color: var(--text-muted);
-  margin-bottom: 3px;
-}
-:deep(.detail-value) {
-  font-size: 0.9rem; font-weight: 600;
-  color: var(--text-primary);
-  word-break: break-word;
-}
+:deep(.detail-label) { font-size: 0.72rem; color: var(--text-muted); font-weight: 600; margin-bottom: 2px; }
+:deep(.detail-value) { font-size: 0.92rem; color: var(--text-primary); font-weight: 700; }
 :deep(.detail-value.mono) { font-family: var(--font-mono); font-size: 0.82rem; }
 
-/* ── Verify section ────────────────────────────────────────────────────────── */
+/* ── Verify Section ────────────────────────────────────────────────────────── */
 .verify-section {
-  padding: 22px 28px 22px;
-  background: linear-gradient(180deg, rgba(0,180,216,0.04), rgba(6,214,160,0.04));
-  border-top: 1px solid rgba(0,180,216,0.1);
-  display: flex; flex-direction: column; gap: 16px;
+  margin: 0 20px 20px;
+  padding: 20px 24px;
+  background: rgba(0,0,0,0.02);
+  border-radius: 18px;
+  border: 1px solid rgba(0,0,0,0.03);
 }
 .verify-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 16px; margin-bottom: 20px;
 }
-.verify-stat {
-  display: flex; align-items: center; gap: 12px;
-  padding: 12px 14px;
-  background: rgba(255,255,255,0.6);
-  border-radius: 14px;
-  border: 1px solid rgba(255,255,255,0.8);
-}
+.verify-stat { display: flex; align-items: center; gap: 12px; }
 .verify-stat-icon {
-  width: 32px; height: 32px;
-  border-radius: 10px;
-  background: rgba(0,180,216,0.12);
-  color: var(--accent-2);
+  width: 36px; height: 36px; border-radius: 10px;
+  background: #fff; border: 1px solid rgba(0,0,0,0.05);
   display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-.verify-stat-num {
-  font-family: var(--font-mono);
-  font-size: 1.3rem; font-weight: 700;
-  color: var(--text-primary);
-  line-height: 1;
-}
-.verify-stat-label {
-  font-size: 0.7rem; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.06em;
   color: var(--text-muted);
-  margin-top: 4px;
 }
+.verify-stat-num { font-size: 1.05rem; font-weight: 800; color: var(--text-primary); line-height: 1; margin-bottom: 2px; }
+.verify-stat-label { font-size: 0.68rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; }
 
 .copy-btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 10px 14px;
-  background: rgba(255,255,255,0.7);
-  border: 1.5px solid rgba(0,180,216,0.2);
-  color: var(--accent-2);
-  border-radius: 12px;
-  font-weight: 600;
-  font-size: 0.85rem;
-  cursor: pointer;
-  transition: background var(--ease), transform 0.15s;
+  width: 100%; padding: 12px;
+  border-radius: 12px; border: 1px solid rgba(0,0,0,0.08);
+  background: #fff; color: var(--text-secondary);
+  font-size: 0.85rem; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  cursor: pointer; transition: all 0.2s;
+  margin-bottom: 16px;
 }
-.copy-btn:hover { background: rgba(0,180,216,0.1); transform: translateY(-1px); }
+.copy-btn:hover { background: #fafafa; border-color: rgba(0,0,0,0.15); color: var(--text-primary); }
 
 .verified-badge {
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 9px 16px;
-  background: rgba(6,214,160,0.12);
-  border: 1px solid rgba(6,214,160,0.28);
-  border-radius: 999px;
-  font-size: 0.82rem;
-  font-weight: 700;
-  color: #028a65;
-  align-self: flex-start;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  color: var(--status-active); font-weight: 700; font-size: 0.82rem;
 }
 
-/* ── Footer strip ──────────────────────────────────────────────────────────── */
+/* ── Footer ────────────────────────────────────────────────────────────────── */
 .card-footer {
-  padding: 14px 28px;
-  border-top: 1px solid rgba(0,0,0,0.05);
+  padding: 16px 28px;
+  background: rgba(0,0,0,0.03);
   display: flex; align-items: center; gap: 8px;
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
   color: var(--text-muted);
 }
-.footer-sep { opacity: 0.4; }
+.footer-mono { font-family: var(--font-mono); font-size: 0.68rem; font-weight: 600; opacity: 0.7; }
+.footer-sep { opacity: 0.3; }
 
-/* ── Back link ─────────────────────────────────────────────────────────────── */
-.back-link { text-align: center; }
+.back-link { text-align: center; margin-top: 8px; }
 .back-link a {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-size: 0.85rem;
-  color: var(--text-muted);
-  text-decoration: none;
+  font-size: 0.82rem; font-weight: 600; color: var(--text-muted);
+  text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
 }
-.back-link a:hover { color: var(--accent); text-decoration: none; }
+.back-link a:hover { color: var(--accent); }
 
-/* ── Mobile ────────────────────────────────────────────────────────────────── */
-@media (max-width: 560px) {
-  .card-header { flex-direction: column; align-items: center; text-align: center; gap: 16px; padding: 24px 20px 20px; }
-  .header-info { align-items: center; }
-  .student-name { font-size: 1.4rem; }
+@media (max-width: 480px) {
+  .card-header { flex-direction: column; align-items: center; text-align: center; padding: 24px 20px; }
   .status-badge-wrap { justify-content: center; }
-  .details-section, .verify-section, .card-footer { padding-left: 20px; padding-right: 20px; }
-  .validity-bar { margin: 0 20px; }
-  .details-grid { grid-template-columns: 1fr; }
-  .verify-grid { grid-template-columns: 1fr; gap: 10px; }
-  .verified-badge { align-self: center; }
-  .card-footer { justify-content: center; flex-wrap: wrap; }
+  .details-grid { grid-template-columns: 1fr; gap: 14px; }
+  .verify-grid { grid-template-columns: 1fr; }
+  .student-name { font-size: 1.4rem; }
 }
 </style>

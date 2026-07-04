@@ -76,6 +76,12 @@ const ICONS = {
   'send': '<path d="m22 2-7 20-4-9-9-4 20-7z"/>',
   'circle': '<circle cx="12" cy="12" r="10"/>',
   'badge': '<path d="m20 8-4-4H8L4 8v8l4 4h8l4-4z"/><path d="M12 8v6M9 12h6"/>',
+  'company': '<rect x="2" y="10" width="20" height="11" rx="2"/><path d="M7 10V4a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v6M12 14v4M12 10v4"/>',
+  'hospital': '<path d="M18 22V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v18"/><path d="M10 22v-4a2 2 0 0 1 2-2v0a2 2 0 0 1 2 2v4"/><path d="M8 10h8M12 6v8"/>',
+  'church': '<path d="m12 2 3 3-3 3-3-3 3-3Z"/><path d="M6 22V10l6-7 6 7v12"/><path d="M12 10v4M10 12h4"/>',
+  'ngo': '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="M12 8v8M9 12h6"/>',
+  'event': '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M7 2v4M17 2v4M2 10h20"/><circle cx="12" cy="15" r="2"/>',
+  'transport': '<path d="M7 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/><path d="M17 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/><path d="M5 17h14v-6H5v6Z"/><path d="m5 11 3-7h8l3 7"/>',
 }
 
 const path = computed(() => ICONS[props.name] || ICONS.circle)

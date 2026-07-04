@@ -10,56 +10,32 @@ const fs      = require('fs');
 const { getDB } = require('./db');
 const { uploadPhoto, isCloudinaryConfigured, logCloudinaryConfig } = require('./utils/cloudinary');
 
-// ── Optional dual-write to legacy LokiJS during the migration window ─────────
-// Enable with DUAL_WRITE_LOKI=1 (default OFF in the new MongoDB-only world).
-const DUAL_WRITE_LOKI = String(process.env.DUAL_WRITE_LOKI || '').trim() === '1';
-let lokiDbPromise = null;
-function getLokiDB() {
-  if (!DUAL_WRITE_LOKI) return null;
-  if (!lokiDbPromise) {
-    try {
-      const legacy = require('./db/lokijs');
-      lokiDbPromise = legacy.getDB();
-    } catch (err) {
-      console.warn('[dual-write] Loki adapter unavailable:', err.message);
-      lokiDbPromise = Promise.resolve(null);
-    }
-  }
-  return lokiDbPromise;
-}
-
 const app  = express();
 const PORT = process.env.PORT || 4000;
 const IDENTITY_CLOUD_PUBLIC_URL  = (process.env.IDENTITY_CLOUD_PUBLIC_URL  || 'https://identitycloud.vercel.app').replace(/\/$/, '');
 const IDENTITY_CLOUD_BACKEND_URL = (process.env.IDENTITY_CLOUD_BACKEND_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 
-// ── Legacy uploads dir kept ONLY to serve any pre-existing photos that have ──
-// not yet been migrated to Cloudinary. New photos are NOT written here.
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 const PHOTOS_DIR  = path.join(UPLOADS_DIR, 'photos');
 try { fs.mkdirSync(PHOTOS_DIR, { recursive: true }); } catch (_) {}
 
-// ── Middleware ─────────────────────────────────────────────────────────────────
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
-// Serve any leftover legacy photos (read-only fallback).
 app.use('/uploads', express.static(UPLOADS_DIR));
 
-// ── Admin API ────────────────────────────────────────────────────────────────
 app.use('/api/admin', require('./admin'));
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
 function toUrlSlug(value) {
   return String(value || '')
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '') || 'school';
+    .replace(/^-|-$/g, '') || 'org';
 }
 
-function sanitizeStudentId(value) {
+function sanitizeId(value) {
   return String(value || '').trim();
 }
 
@@ -78,170 +54,142 @@ async function writeLog(action, entity, message, metadata = {}) {
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  POST /api/publish
-//  Receives student cards from Card Studio. Photos are uploaded to Cloudinary;
-//  only the resulting secure_url is persisted in MongoDB.
+//  Universal publish endpoint
 // ═══════════════════════════════════════════════════════════════════════════════
 app.post('/api/publish', async (req, res) => {
   try {
     const db = await getDB();
-    const lokiDb = DUAL_WRITE_LOKI ? await getLokiDB() : null;
 
     const {
-      schoolName,
-      schoolSlug: rawSlug,
+      orgName,
+      orgSlug: rawOrgSlug,
+      schoolName,       // backward compat
+      schoolSlug: rawSchoolSlug, // backward compat
+      industry = 'education',
       themeColor = '#00e5a0',
       logo = null,
-      students = [],
+      records = [],
+      students = [],    // backward compat
     } = req.body || {};
 
-    if (!schoolName) return res.status(400).json({ error: 'schoolName is required' });
-    if (!Array.isArray(students) || students.length === 0) {
-      return res.status(400).json({ error: 'students array is required and must not be empty' });
+    const finalOrgName = orgName || schoolName;
+    const finalRawSlug = rawOrgSlug || rawSchoolSlug;
+    const finalRecords = (records && records.length) ? records : students;
+
+    if (!finalOrgName) return res.status(400).json({ error: 'orgName is required' });
+    if (!Array.isArray(finalRecords) || finalRecords.length === 0) {
+      return res.status(400).json({ error: 'records array is required and must not be empty' });
     }
 
-    const schoolSlug = rawSlug ? toUrlSlug(rawSlug) : toUrlSlug(schoolName);
+    const orgSlug = finalRawSlug ? toUrlSlug(finalRawSlug) : toUrlSlug(finalOrgName);
 
-    // ── Upsert school ──────────────────────────────────────────────────────────
-    const existingSchool = await db.schools.findOne({ slug: schoolSlug });
-    let school;
-    if (existingSchool) {
-      school = await db.schools.findOneAndUpdate(
-        { slug: schoolSlug },
-        { $set: { name: schoolName, themeColor, logo } }
+    // ── Upsert organization ──────────────────────────────────────────────────
+    const existingOrg = await db.organizations.findOne({ slug: orgSlug });
+    if (existingOrg) {
+      await db.organizations.findOneAndUpdate(
+        { slug: orgSlug },
+        { $set: { name: finalOrgName, themeColor, logo, industry } }
       );
     } else {
-      school = await db.schools.create({ name: schoolName, slug: schoolSlug, themeColor, logo });
+      await db.organizations.create({ name: finalOrgName, slug: orgSlug, themeColor, logo, industry });
     }
 
-    if (lokiDb) {
-      try {
-        const existingL = await lokiDb.schools.findOne({ slug: schoolSlug });
-        if (existingL) {
-          await lokiDb.schools.findOneAndUpdate({ slug: schoolSlug }, { $set: { name: schoolName, themeColor, logo } });
-        } else {
-          await lokiDb.schools.create({ name: schoolName, slug: schoolSlug, themeColor, logo });
-        }
-      } catch (e) { console.warn('[dual-write] school upsert failed:', e.message); }
-    }
-
-    // ── Upsert students ────────────────────────────────────────────────────────
+    // ── Upsert records ────────────────────────────────────────────────────────
     const published = [];
     const errors    = [];
 
-    for (const raw of students) {
-      const studentId = sanitizeStudentId(raw.studentId);
-      const fullName  = String(raw.fullName || '').trim();
+    for (const raw of finalRecords) {
+      const recordId = sanitizeId(raw.recordId || raw.studentId);
+      const fullName = String(raw.fullName || '').trim();
 
-      if (!studentId || !fullName) {
-        errors.push({ studentId, reason: 'Missing studentId or fullName' });
+      if (!recordId || !fullName) {
+        errors.push({ recordId, reason: 'Missing recordId or fullName' });
         continue;
       }
 
-      const issuedAt  = raw.issuedAt  || new Date().toISOString();
-      const expiresAt = raw.expiresAt || null;
-      const status    = calcStatus(expiresAt, raw.status || 'active');
+      const entityType = raw.entityType || 'student';
+      const category   = raw.category   || raw.class || null;
+      const issuedAt   = raw.issuedAt   || new Date().toISOString();
+      const expiresAt  = raw.expiresAt  || null;
+      const status     = calcStatus(expiresAt, raw.status || 'active');
+      const metadata   = raw.metadata   || {};
 
-      // ── Image handling: upload to Cloudinary, keep only the URL ──
       let resolvedPhotoUrl  = raw.photoUrl || null;
       let resolvedPublicId  = null;
 
       if (raw.photoData && typeof raw.photoData === 'string') {
         if (isCloudinaryConfigured()) {
-          const safeId = studentId.replace(/[^a-zA-Z0-9_-]/g, '_');
+          const safeId = recordId.replace(/[^a-zA-Z0-9_-]/g, '_');
           const result = await uploadPhoto(raw.photoData, {
-            folder: `${process.env.CLOUDINARY_FOLDER || 'identity-cloud/students'}/${schoolSlug}`,
+            folder: `${process.env.CLOUDINARY_FOLDER || 'identity-cloud/records'}/${orgSlug}`,
             publicId: safeId,
           });
           if (result) {
             resolvedPhotoUrl = result.url;
             resolvedPublicId = result.publicId;
-          } else {
-            console.warn('[publish] Cloudinary upload failed for', studentId);
           }
-        } else {
-          console.warn('[publish] Cloudinary not configured — photo for', studentId, 'will not be stored.');
         }
       }
 
-      const studentData = {
-        studentId,
+      const recordData = {
+        recordId,
         fullName,
         photoUrl:      resolvedPhotoUrl,
         photoPublicId: resolvedPublicId,
-        schoolSlug,
-        class:         raw.class     || null,
+        orgSlug,
+        entityType,
+        category,
         status,
         issuedAt,
         expiresAt,
-        scanCount:     0,
-        lastScannedAt: null,
+        metadata,
       };
 
-      const existing = await db.students.findOne({ schoolSlug, studentId });
+      const existing = await db.records.findOne({ orgSlug, recordId });
 
-      let student;
       if (existing) {
         const setFields = {
-          fullName:  studentData.fullName,
-          class:     studentData.class,
-          status:    studentData.status,
-          issuedAt:  studentData.issuedAt,
-          expiresAt: studentData.expiresAt,
+          fullName:   recordData.fullName,
+          entityType: recordData.entityType,
+          category:   recordData.category,
+          status:     recordData.status,
+          issuedAt:   recordData.issuedAt,
+          expiresAt:  recordData.expiresAt,
+          metadata:   recordData.metadata,
         };
-        // Don't wipe an existing photo if no new one was uploaded.
         if (resolvedPhotoUrl) {
           setFields.photoUrl      = resolvedPhotoUrl;
           setFields.photoPublicId = resolvedPublicId;
         }
-        student = await db.students.findOneAndUpdate(
-          { schoolSlug, studentId },
-          { $set: setFields }
-        );
+        await db.records.findOneAndUpdate({ orgSlug, recordId }, { $set: setFields });
       } else {
-        student = await db.students.create(studentData);
-      }
-
-      // Mirror to Loki if enabled (best-effort).
-      if (lokiDb) {
-        try {
-          const existingL = await lokiDb.students.findOne({ schoolSlug, studentId });
-          if (existingL) {
-            await lokiDb.students.findOneAndUpdate(
-              { schoolSlug, studentId },
-              { $set: {
-                  fullName:  studentData.fullName,
-                  photoUrl:  studentData.photoUrl,
-                  class:     studentData.class,
-                  status:    studentData.status,
-                  issuedAt:  studentData.issuedAt,
-                  expiresAt: studentData.expiresAt,
-                } }
-            );
-          } else {
-            await lokiDb.students.create(studentData);
-          }
-        } catch (e) { console.warn('[dual-write] student upsert failed:', e.message); }
+        await db.records.create(recordData);
       }
 
       published.push({
-        studentId,
+        recordId,
+        studentId: recordId, // backward compat
         fullName,
-        verifyUrl: `${IDENTITY_CLOUD_PUBLIC_URL}/${schoolSlug}/${encodeURIComponent(studentId)}`,
+        verifyUrl: `${IDENTITY_CLOUD_PUBLIC_URL}/${orgSlug}/${encodeURIComponent(recordId)}`,
       });
     }
 
-    await writeLog('PUBLISH', 'SCHOOL', `Published ${published.length} student(s) for "${schoolName}"`, {
-      schoolSlug, count: published.length,
+    await writeLog('PUBLISH', 'ORGANIZATION', `Published ${published.length} record(s) for "${finalOrgName}"`, {
+      orgSlug, count: published.length,
     });
 
     return res.json({
       success: true,
-      schoolSlug,
-      schoolName,
+      orgSlug,
+      schoolSlug: orgSlug, // backward compat
+      orgName: finalOrgName,
+      schoolName: finalOrgName, // backward compat
       count: published.length,
-      students: published,
+      records: published,
+      students: published, // backward compat
       errors,
-      schoolUrl: `${IDENTITY_CLOUD_PUBLIC_URL}/${schoolSlug}`,
+      orgUrl: `${IDENTITY_CLOUD_PUBLIC_URL}/${orgSlug}`,
+      schoolUrl: `${IDENTITY_CLOUD_PUBLIC_URL}/${orgSlug}`, // backward compat
     });
 
   } catch (err) {
@@ -251,57 +199,63 @@ app.post('/api/publish', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  GET /api/verify/:schoolSlug/:studentId
+//  GET /api/verify/:orgSlug/:recordId
 // ═══════════════════════════════════════════════════════════════════════════════
-app.get('/api/verify/:schoolSlug/:studentId', async (req, res) => {
+app.get('/api/verify/:orgSlug/:recordId', async (req, res) => {
   try {
     const db = await getDB();
-    const { schoolSlug, studentId } = req.params;
+    const { orgSlug, recordId } = req.params;
 
-    const safeSchoolSlug = toUrlSlug(schoolSlug);
-    const safeStudentId  = decodeURIComponent(studentId).trim();
+    const safeOrgSlug = toUrlSlug(orgSlug);
+    const safeRecordId = decodeURIComponent(recordId).trim();
 
-    const student = await db.students.findOne({ schoolSlug: safeSchoolSlug, studentId: safeStudentId });
-    if (!student) {
+    const record = await db.records.findOne({ orgSlug: safeOrgSlug, recordId: safeRecordId });
+    if (!record) {
       return res.status(404).json({
-        error: 'Student not found',
+        error: 'Identity not found',
         message: 'This identity is invalid or has not been published.',
       });
     }
 
-    const liveStatus = calcStatus(student.expiresAt, student.status);
+    const liveStatus = calcStatus(record.expiresAt, record.status);
     const now = new Date().toISOString();
 
-    const updated = await db.students.findOneAndUpdate(
-      { schoolSlug: safeSchoolSlug, studentId: safeStudentId },
+    const updated = await db.records.findOneAndUpdate(
+      { orgSlug: safeOrgSlug, recordId: safeRecordId },
       {
         $set: {
-          scanCount:     (student.scanCount || 0) + 1,
+          scanCount:     (record.scanCount || 0) + 1,
           lastScannedAt: now,
           status:        liveStatus,
         }
       }
     );
 
-    const school = await db.schools.findOne({ slug: safeSchoolSlug });
+    const org = await db.organizations.findOne({ slug: safeOrgSlug });
 
-    await writeLog('SCAN', 'STUDENT', `QR verified: ${safeStudentId} @ ${safeSchoolSlug}`, {
-      schoolSlug: safeSchoolSlug, studentId: safeStudentId,
+    await writeLog('SCAN', 'RECORD', `QR verified: ${safeRecordId} @ ${safeOrgSlug}`, {
+      orgSlug: safeOrgSlug, recordId: safeRecordId,
     });
 
     let remainingDays = null;
-    if (student.expiresAt) {
-      const diff = new Date(student.expiresAt) - new Date();
+    if (record.expiresAt) {
+      const diff = new Date(record.expiresAt) - new Date();
       remainingDays = Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
     }
 
     return res.json({
-      student: {
+      record: {
         ...updated,
         status: liveStatus,
         remainingDays,
       },
-      school: school || { name: safeSchoolSlug, slug: safeSchoolSlug, themeColor: '#00e5a0' },
+      student: { // backward compat
+        ...updated,
+        status: liveStatus,
+        remainingDays,
+      },
+      organization: org || { name: safeOrgSlug, slug: safeOrgSlug, themeColor: '#00e5a0', industry: 'education' },
+      school: org || { name: safeOrgSlug, slug: safeOrgSlug, themeColor: '#00e5a0' }, // backward compat
     });
 
   } catch (err) {
@@ -311,35 +265,45 @@ app.get('/api/verify/:schoolSlug/:studentId', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  GET /api/school/:slug
+//  GET /api/org/:slug
 // ═══════════════════════════════════════════════════════════════════════════════
-app.get('/api/school/:slug', async (req, res) => {
+app.get('/api/org/:slug', async (req, res) => {
   try {
     const db = await getDB();
     const slug = toUrlSlug(req.params.slug);
 
-    const school = await db.schools.findOne({ slug });
-    if (!school) return res.status(404).json({ error: 'School not found' });
+    const org = await db.organizations.findOne({ slug });
+    if (!org) return res.status(404).json({ error: 'Organization not found' });
 
-    const studentCount = await db.students.countDocuments({ schoolSlug: slug });
-    return res.json({ ...school, studentCount });
+    const recordCount = await db.records.countDocuments({ orgSlug: slug });
+    return res.json({ ...org, recordCount, studentCount: recordCount });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
+// Backward compat alias
+app.get('/api/school/:slug', (req, res) => {
+  res.redirect(301, `/api/org/${req.params.slug}`);
+});
+
 // ═══════════════════════════════════════════════════════════════════════════════
-//  GET /api/school/:slug/students
+//  GET /api/org/:slug/records
 // ═══════════════════════════════════════════════════════════════════════════════
-app.get('/api/school/:slug/students', async (req, res) => {
+app.get('/api/org/:slug/records', async (req, res) => {
   try {
     const db = await getDB();
     const slug = toUrlSlug(req.params.slug);
-    const students = await db.students.find({ schoolSlug: slug });
-    return res.json(students);
+    const records = await db.records.find({ orgSlug: slug });
+    return res.json(records);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Backward compat alias
+app.get('/api/school/:slug/students', (req, res) => {
+  res.redirect(301, `/api/org/${req.params.slug}/records`);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -348,33 +312,22 @@ app.get('/api/school/:slug/students', async (req, res) => {
 app.get('/api/stats', async (req, res) => {
   try {
     const db = await getDB();
-    const totalStudents  = await db.students.countDocuments();
-    const totalSchools   = await db.schools.countDocuments();
-    const activeStudents = await db.students.countDocuments({ status: 'active' });
-    return res.json({ totalStudents, totalSchools, activeStudents });
+    const totalRecords  = await db.records.countDocuments();
+    const totalOrgs     = await db.organizations.countDocuments();
+    const activeRecords = await db.records.countDocuments({ status: 'active' });
+    return res.json({
+      totalRecords, totalStudents: totalRecords,
+      totalOrgs, totalSchools: totalOrgs,
+      activeRecords, activeStudents: activeRecords
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  Health check
-// ═══════════════════════════════════════════════════════════════════════════════
-app.get('/api/health', (_, res) => {
-  res.json({ status: 'ok', ts: new Date().toISOString() });
+app.listen(PORT, () => {
+  console.log(`[server] Identity Cloud running on port ${PORT}`);
+  logCloudinaryConfig();
 });
 
-// ── Start ──────────────────────────────────────────────────────────────────────
-getDB().then(() => {
-  logCloudinaryConfig();
-  if (DUAL_WRITE_LOKI) console.log('[startup] Dual-write to LokiJS is ENABLED (DUAL_WRITE_LOKI=1).');
-  app.listen(PORT, () => {
-    console.log(`\n🌐  Identity Cloud Backend running on http://localhost:${PORT}`);
-    console.log(`    POST /api/publish           – receive cards from Card Studio`);
-    console.log(`    GET  /api/verify/:slug/:id  – verify student on QR scan`);
-    console.log(`    GET  /api/school/:slug       – school metadata\n`);
-  });
-}).catch(err => {
-  console.error('Failed to initialize database:', err);
-  process.exit(1);
-});
+module.exports = app;
