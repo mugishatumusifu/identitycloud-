@@ -44,7 +44,7 @@
         <div>
           <div class="crumbs" v-if="activeSchool">
             <button class="crumb-btn" @click="exitSchool">
-              <Icon name="arrow-left" :size="14" /> Schools
+              <Icon name="arrow-left" :size="14" /> Industries
             </button>
             <span class="crumb-sep">/</span>
             <span class="crumb-current">{{ activeSchool.school.name }}</span>
@@ -97,9 +97,9 @@
         <div class="toolbar">
           <div class="search-wrap">
             <Icon name="search" :size="16" />
-            <input v-model="schoolSearch" type="text" placeholder="Search projects…" />
+            <input v-model="schoolSearch" type="text" placeholder="Search industries…" />
           </div>
-          <div class="count-chip">{{ filteredSchools.length }} project{{ filteredSchools.length === 1 ? '' : 's' }}</div>
+          <div class="count-chip">{{ filteredSchools.length }} industr{{ filteredSchools.length === 1 ? 'y' : 'ies' }}</div>
         </div>
 
         <div v-if="loading && !schools.length" class="loading-block"><div class="spinner"></div></div>
@@ -107,7 +107,7 @@
         <div v-else-if="!filteredSchools.length" class="empty-state glass-card">
           <Icon name="building" :size="32" />
           <h3>No projects yet</h3>
-          <p>Projects appear here as soon as they're published from CardNova Studio, for any industry.</p>
+          <p>Industries appear here as soon as they're published from CardNova Studio, for any industry.</p>
         </div>
 
         <div v-else class="schools-grid">
@@ -166,7 +166,7 @@
                 <Icon name="link" :size="14" /> Open public page
               </a>
               <button class="action-btn danger" @click="confirmDeleteSchool(activeSchool.school)">
-                <Icon name="trash" :size="14" /> Delete project
+                <Icon name="trash" :size="14" /> Delete industry
               </button>
             </div>
           </div>
@@ -291,11 +291,11 @@
         <div v-if="editSchool" class="modal-backdrop" @click.self="editSchool = null">
           <div class="modal-card form-modal">
             <div class="modal-head">
-              <h3>Edit project</h3>
+              <h3>Edit industry</h3>
               <button class="icon-btn" @click="editSchool = null"><Icon name="x" :size="16" /></button>
             </div>
             <label class="form-field">
-              <span>Project name</span>
+              <span>Industry name</span>
               <input v-model="editSchool.name" type="text" />
             </label>
             <label class="form-field">
@@ -436,21 +436,21 @@ const confirmLoading = ref(false)
 
 const navItems = [
   { key: 'overview', label: 'Overview', icon: 'sparkles' },
-  { key: 'schools',  label: 'Schools',  icon: 'school' },
+  { key: 'schools',  label: 'Industries',  icon: 'school' },
   { key: 'logs',     label: 'Activity', icon: 'activity' },
 ]
 
 const pageTitle = computed(() => {
   if (activeSchool.value) return activeSchool.value.school.name
   if (tab.value === 'overview') return 'Dashboard Overview'
-  if (tab.value === 'schools')  return 'Schools'
+  if (tab.value === 'schools')  return 'Industries'
   if (tab.value === 'logs')     return 'Activity Log'
   return ''
 })
 const pageSub = computed(() => {
   if (activeSchool.value) return 'Manage classes, students and identity status.'
   if (tab.value === 'overview') return 'Real-time stats and recent activity across Identity Cloud.'
-  if (tab.value === 'schools')  return 'Browse, edit, switch into and delete schools.'
+  if (tab.value === 'schools')  return 'Browse, edit, switch into and delete industries.'
   if (tab.value === 'logs')     return 'Audit trail of every publish, scan and admin action.'
   return ''
 })
@@ -458,8 +458,8 @@ const pageSub = computed(() => {
 const kpis = computed(() => {
   const t = overview.value?.totals || {}
   return [
-    { label: 'Projects',        value: t.schools  ?? 0, icon: 'building',     color: '#00b4d8' },
-    { label: 'Records',         value: t.students ?? 0, icon: 'users',        color: '#0077b6' },
+    { label: 'Industries',      value: t.schools  ?? 0, icon: 'building',     color: '#00b4d8' },
+    { label: 'Identities',      value: t.students ?? 0, icon: 'users',        color: '#0077b6' },
     { label: 'Active IDs',      value: t.active   ?? 0, icon: 'check-circle', color: '#06d6a0' },
     { label: 'Expired',         value: t.expired  ?? 0, icon: 'hourglass',    color: '#ef476f' },
     { label: 'Revoked',         value: t.revoked  ?? 0, icon: 'x-circle',     color: '#ff9500' },
@@ -601,8 +601,8 @@ async function saveEditSchool() {
 function confirmDeleteSchool(s) {
   confirmAction.value = {
     title: `Delete ${s.name}?`,
-    message: `This will permanently remove the project and ALL its ${(s.entityLabelPlural || 'records').toLowerCase()}, photos, and identities. This cannot be undone.`,
-    label: 'Delete project',
+    message: `This will permanently remove the industry and ALL its ${(s.entityLabelPlural || 'identities').toLowerCase()}, photos, and identities. This cannot be undone.`,
+    label: 'Delete industry',
     run: async () => {
       await api.delete(`/api/admin/schools/${encodeURIComponent(s.slug)}`)
       activeSchool.value = null

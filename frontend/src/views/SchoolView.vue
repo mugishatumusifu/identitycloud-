@@ -6,8 +6,8 @@
 
     <div v-else-if="!school" class="error-box glass-card fade-up">
       <div class="err-icon"><Icon name="building" :size="32" /></div>
-      <h2>Project Not Found</h2>
-      <p>No project with slug <code>{{ schoolSlug }}</code> has been published.</p>
+      <h2>Industry Not Found</h2>
+      <p>No industry with slug <code>{{ schoolSlug }}</code> has been published.</p>
       <a href="/" class="back-btn"><Icon name="arrow-left" :size="14" /> Home</a>
     </div>
 
