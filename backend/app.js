@@ -8,7 +8,7 @@ const path    = require('path');
 const fs      = require('fs');
 
 const { getDB } = require('./db');
-const { uploadPhoto, isCloudinaryConfigured, logCloudinaryConfig } = require('./utils/cloudinary');
+const { uploadPhoto, uploadPdf, buildPdfPageUrl, isCloudinaryConfigured, logCloudinaryConfig } = require('./utils/cloudinary');
 
 // ── Optional dual-write to legacy LokiJS during the migration window ─────────
 // Enable with DUAL_WRITE_LOKI=1 (default OFF in the new MongoDB-only world).
@@ -213,6 +213,32 @@ app.post('/api/publish', async (req, res) => {
         }
       }
 
+      // ── Card PDF handling: upload the ready-to-download student card ──
+      // (the same PDF CardNova's Export feature produces) as a raw asset so
+      // it can be downloaded from the verification page. cardHasBack tells
+      // us whether page 2 of that PDF is the back side.
+      let resolvedCardPdfUrl      = null;
+      let resolvedCardPdfPublicId = null;
+      const resolvedCardHasBack   = !!raw.cardHasBack;
+
+      if (raw.cardPdfData && typeof raw.cardPdfData === 'string') {
+        if (isCloudinaryConfigured()) {
+          const safeId = `${studentId.replace(/[^a-zA-Z0-9_-]/g, '_')}_card`;
+          const result = await uploadPdf(raw.cardPdfData, {
+            folder: `${process.env.CLOUDINARY_FOLDER || 'identity-cloud/students'}/${schoolSlug}/cards`,
+            publicId: safeId,
+          });
+          if (result) {
+            resolvedCardPdfUrl = result.url;
+            resolvedCardPdfPublicId = result.publicId;
+          } else {
+            console.warn('[publish] Cloudinary PDF upload failed for', studentId);
+          }
+        } else {
+          console.warn('[publish] Cloudinary not configured — card PDF for', studentId, 'will not be stored.');
+        }
+      }
+
       // entityType: what kind of record this is within its industry
       // (e.g. "patient", "employee", "attendee"). Defaults to "student" so
       // existing CardNova Studio education payloads are unaffected.
@@ -226,6 +252,7 @@ app.post('/api/publish', async (req, res) => {
       const KNOWN_KEYS = new Set([
         'studentId', 'fullName', 'photoData', 'photoUrl', 'class',
         'status', 'issuedAt', 'expiresAt', 'entityType', 'data',
+        'cardPdfData', 'cardHasBack',
       ]);
       let dynamicData = {};
       if (raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data)) {
@@ -241,6 +268,9 @@ app.post('/api/publish', async (req, res) => {
         fullName,
         photoUrl:      resolvedPhotoUrl,
         photoPublicId: resolvedPublicId,
+        cardPdfUrl:      resolvedCardPdfUrl,
+        cardPdfPublicId: resolvedCardPdfPublicId,
+        cardPdfHasBack:  resolvedCardHasBack,
         schoolSlug,
         class:         raw.class     || null,
         status,
@@ -269,6 +299,12 @@ app.post('/api/publish', async (req, res) => {
         if (resolvedPhotoUrl) {
           setFields.photoUrl      = resolvedPhotoUrl;
           setFields.photoPublicId = resolvedPublicId;
+        }
+        // Don't wipe an existing card PDF if no new one was uploaded/generated.
+        if (resolvedCardPdfUrl) {
+          setFields.cardPdfUrl      = resolvedCardPdfUrl;
+          setFields.cardPdfPublicId = resolvedCardPdfPublicId;
+          setFields.cardPdfHasBack  = resolvedCardHasBack;
         }
         student = await db.students.findOneAndUpdate(
           { schoolSlug, studentId },
@@ -379,11 +415,26 @@ app.get('/api/verify/:schoolSlug/:studentId', async (req, res) => {
       remainingDays = Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
     }
 
+    // Build separate front/back download URLs from the single published
+    // card PDF (page 1 = front, page 2 = back when present), so the
+    // verification page can offer both without storing two files.
+    let cardFrontUrl = null;
+    let cardBackUrl  = null;
+    if (updated.cardPdfPublicId) {
+      cardFrontUrl = buildPdfPageUrl(updated.cardPdfPublicId, 1);
+      if (updated.cardPdfHasBack) cardBackUrl = buildPdfPageUrl(updated.cardPdfPublicId, 2);
+    } else if (updated.cardPdfUrl) {
+      // Fallback for any legacy record that only has the raw combined URL.
+      cardFrontUrl = updated.cardPdfUrl;
+    }
+
     return res.json({
       student: {
         ...updated,
         status: liveStatus,
         remainingDays,
+        cardFrontUrl,
+        cardBackUrl,
       },
       school: school || { name: safeSchoolSlug, slug: safeSchoolSlug, themeColor: '#00e5a0', industry: 'education', entityLabel: 'Student', entityLabelPlural: 'Students', fieldDefinitions: [] },
     });

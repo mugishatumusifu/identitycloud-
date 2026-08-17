@@ -7,6 +7,16 @@ const StudentSchema = new mongoose.Schema(
     fullName:      { type: String, required: true, trim: true },
     photoUrl:      { type: String, default: null },          // Cloudinary secure_url
     photoPublicId: { type: String, default: null },          // for future deletion
+    // Ready-to-download student card PDF, pushed from CardNova Studio at
+    // publish time (the exact same PDF Export produces). cardPdfUrl points
+    // at the full card PDF (front, or front+back combined when the
+    // template has a back side and it was included). cardPdfHasBack tells
+    // the frontend whether page 2 of that PDF is the back side, so it can
+    // offer a "front" and "back" download that both point at the same file
+    // (front = page 1, back = page 2) without needing two separate assets.
+    cardPdfUrl:      { type: String, default: null },
+    cardPdfPublicId: { type: String, default: null },
+    cardPdfHasBack:  { type: Boolean, default: false },
     schoolSlug:    { type: String, required: true, index: true },
     class:         { type: String, default: null },
     status:        { type: String, enum: ['active', 'expired', 'revoked'], default: 'active', index: true },

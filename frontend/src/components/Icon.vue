@@ -76,6 +76,8 @@ const ICONS = {
   'send': '<path d="m22 2-7 20-4-9-9-4 20-7z"/>',
   'circle': '<circle cx="12" cy="12" r="10"/>',
   'badge': '<path d="m20 8-4-4H8L4 8v8l4 4h8l4-4z"/><path d="M12 8v6M9 12h6"/>',
+  'download': '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
+  'file-text': '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6M9 9h1"/>',
 }
 
 const path = computed(() => ICONS[props.name] || ICONS.circle)

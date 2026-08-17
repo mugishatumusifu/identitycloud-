@@ -99,6 +99,56 @@
           </div>
         </div>
 
+        <!-- Additional information (fields that aren't printed on the card
+             itself, e.g. columns collected only for Identity Cloud) — always
+             rendered after the normal card details above. -->
+        <div v-if="additionalDetailFields.length" class="details-section additional-section">
+          <div class="section-label">
+            <Icon name="info" :size="12" />
+            <span>Additional Information</span>
+          </div>
+          <div class="details-grid">
+            <DetailItem
+              v-for="f in additionalDetailFields"
+              :key="f.key"
+              icon="list"
+              :label="f.label"
+              :value="f.value"
+            />
+          </div>
+        </div>
+
+        <!-- Card Downloads (front / back PDF, pushed at publish time) -->
+        <div v-if="data.student.cardFrontUrl" class="details-section card-downloads-section">
+          <div class="section-label">
+            <Icon name="file-text" :size="12" />
+            <span>{{ entityLabel }} Card</span>
+          </div>
+          <div class="card-download-row">
+            <a
+              class="card-download-btn"
+              :href="data.student.cardFrontUrl"
+              target="_blank"
+              rel="noopener"
+              :download="`${data.student.studentId}_front.pdf`"
+            >
+              <Icon name="download" :size="15" />
+              <span>Download Front Side</span>
+            </a>
+            <a
+              v-if="data.student.cardBackUrl"
+              class="card-download-btn"
+              :href="data.student.cardBackUrl"
+              target="_blank"
+              rel="noopener"
+              :download="`${data.student.studentId}_back.pdf`"
+            >
+              <Icon name="download" :size="15" />
+              <span>Download Back Side</span>
+            </a>
+          </div>
+        </div>
+
         <!-- Verification Record -->
         <div class="verify-section">
           <div class="section-label">
@@ -235,6 +285,19 @@ const dynamicDetailFields = computed(() => {
   if (!Array.isArray(defs) || !bag) return []
   return defs
     .filter(f => f.showOnCard !== false && bag[f.key] !== undefined && bag[f.key] !== null && bag[f.key] !== '')
+    .map(f => ({ key: f.key, label: f.label || f.key, value: String(bag[f.key]) }))
+})
+
+// Fields explicitly marked showOnCard:false (collected during import for
+// Identity Cloud only — never printed on the physical/rendered card) render
+// in a separate "Additional Information" section, always placed after the
+// normal card details above so the usual info is seen first.
+const additionalDetailFields = computed(() => {
+  const defs = data.value?.school?.fieldDefinitions
+  const bag  = data.value?.student?.data
+  if (!Array.isArray(defs) || !bag) return []
+  return defs
+    .filter(f => f.showOnCard === false && bag[f.key] !== undefined && bag[f.key] !== null && bag[f.key] !== '')
     .map(f => ({ key: f.key, label: f.label || f.key, value: String(bag[f.key]) }))
 })
 
@@ -461,6 +524,10 @@ onMounted(async () => {
   border-top: 1px solid rgba(0,0,0,0.05);
   margin-top: 16px;
 }
+.additional-section {
+  margin-top: 0;
+  padding-top: 4px;
+}
 .section-label {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 0.7rem;
@@ -503,6 +570,25 @@ onMounted(async () => {
   word-break: break-word;
 }
 :deep(.detail-value.mono) { font-family: var(--font-mono); font-size: 0.82rem; }
+
+/* ── Card downloads ────────────────────────────────────────────────────────── */
+.card-downloads-section { padding-top: 4px; }
+.card-download-row {
+  display: flex; flex-wrap: wrap; gap: 10px;
+}
+.card-download-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 11px 18px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-green));
+  color: #fff;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 0.85rem;
+  text-decoration: none;
+  flex: 1 1 180px;
+  transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+}
+.card-download-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,180,216,0.25); text-decoration: none; opacity: 0.95; }
 
 /* ── Verify section ────────────────────────────────────────────────────────── */
 .verify-section {
